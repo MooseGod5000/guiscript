@@ -10,6 +10,7 @@ local _VirtualInputManager = game:GetService("VirtualInputManager")
 local _TextChatService = game:GetService("TextChatService")
 local _ReplicatedStorage = game:GetService("ReplicatedStorage")
 local _PathfindingService = game:GetService("PathfindingService")
+local _HttpService = game:GetService("HttpService")
 local _CLICK_SOUND = "rbxassetid://100906385041190"
 local _HOVER_SOUND = "rbxassetid://92708987611847"
 local _NOTIF_SOUND = "rbxassetid://127119919079045"
@@ -846,13 +847,78 @@ local S = {
    gemFarmMethod = "None",
    gemTweenSpeed = 50,
    autoEternalFireEnabled = false,
+   privateServerAutofarmEnabled = false,
+   psAutoFarmWeapons = {},
+   psAutoInvisEnabled = false,
+   psAutoReorderEnabled = false,
+   psAutoReorderAmount = 1,
+   psFarmMethod = "Teleport",
+   psFarmTweenSpeed = 50,
+   psFastModeEnabled = false,
+   psWebhookEnabled = false,
+   psWebhookUrl = "",
+   playerEspEnabled = false,
+   activePlayerEsp = {},
+   _staffCache = {},
+   -- Egg Autofarm
+   eggAutofarmEnabled = false,
+   eggIsFollowing = false,
+   eggFarmMethod = "Teleport",
+   eggTweenSpeed = 50,
+   eggAutoInvisEnabled = false,
+   eggAutoReorderEnabled = false,
+   eggAutoReorderAmount = 1,
+   eggEquipWeaponEnabled = false,
+   eggAutoSwingEnabled = false,
+   eggAutoFarmWeapons = {},
+   eggCurrentTarget = nil,
 }
+-- Discord Webhook Stats Tracking (for PS Autofarm)
+local _webhookStats = {
+   goldStart = 0,
+   xpStart = 0,
+   generalsKilled = 0,
+   demonsKilled = 0,
+   unknownGemsPickedUp = 0,
+   targetedGems = {}, -- {gemName = count}
+}
+local _webhookValidated = false
+local function resetWebhookStats()
+   local player = _Players.LocalPlayer
+   local leaderstats = player and player:FindFirstChild("leaderstats")
+   local goldVal = leaderstats and leaderstats:FindFirstChild("Gold")
+   local xpVal = leaderstats and leaderstats:FindFirstChild("XP")
+   _webhookStats.goldStart = goldVal and goldVal.Value or 0
+   _webhookStats.xpStart = xpVal and xpVal.Value or 0
+   _webhookStats.generalsKilled = 0
+   _webhookStats.demonsKilled = 0
+   _webhookStats.unknownGemsPickedUp = 0
+   _webhookStats.targetedGems = {}
+end
+local function sendDiscordWebhook(url, payload)
+   local success, err = pcall(function()
+       local httpRequest = (syn and syn.request) or (http and http.request) or http_request or request
+       if not httpRequest then
+           warn("[Webhook] No HTTP request function available.")
+           return
+       end
+       httpRequest({
+           Url = url,
+           Method = "POST",
+           Headers = {["Content-Type"] = "application/json"},
+           Body = _HttpService:JSONEncode(payload),
+       })
+   end)
+   if not success then warn("[Webhook] Send failed: " .. tostring(err)) end
+   return success
+end
 -- Settings tab state (kept as individual locals for Enum/keybind usage)
 local guiToggleKeyCode = Enum.KeyCode.E
 local guiToggleKeyName = "E"
 local panicKeyCode = nil
 local panicKeyName = "None"
 local _FOB_ADMIN_GROUP_ID = 1162527
+local _FOB_OFFICIAL_GROUP_ID = 2982086
 -- Creator Mode forward declaration
 local _addTabBtn -- forward declared, assigned in Creator Mode system
 -- Forward-declare invis functions (defined in PLAYER tab, used by AUTOFARM tab)
@@ -874,11 +940,13 @@ local gemValues = {
    [39] = "Ice Gem",
    [42] = "Titan Core",
    [50] = "Storm Catalyst",
+   [51] = "Legendary Shard",
 }
 local selectedGems = {}
 for id, _ in pairs(gemValues) do
    selectedGems[id] = true
 end
+selectedGems[51] = nil -- Legendary Shard unselected by default
 -- Gem cache (shared between ESP, Farm, Bot to avoid repeated workspace scans)
 local _cachedGems = {}
 local _lastGemCacheTime = 0
@@ -905,8 +973,8 @@ local MAPS = {
    ":mapvote jungle", ":mapvote rogue", ":mapvote island",
    ":mapvote cavern", ":mapvote savannah", ":mapvote blizzard",
    ":mapvote serenity", ":mapvote volcano", ":mapvote archipelago",
-   ":mapvote canyon", ":mapvote underworld", ":mapvote ragnarok",
-   ":mapvote aurelia"
+   ":mapvote atlantis", ":mapvote aether", ":mapvote underworld", ":mapvote ragnarok",
+   ":mapvote aurelia", ":mapvote chocolate kingdom"
 }
 -- Path visuals folder
 local pathVisualsFolder = workspace:FindFirstChild("BotPathVisuals")
@@ -1327,11 +1395,26 @@ do
                elseif connection["Disconnect"] then connection["Disconnect"](connection)
                end
            end
-       else
-           S.antiAfkConnection = speaker.Idled:Connect(function()
+       end
+       -- Always connect Idled handler as fallback
+       S.antiAfkConnection = speaker.Idled:Connect(function()
+           local VirtualUser = game:GetService("VirtualUser")
+           VirtualUser:CaptureController()
+           VirtualUser:ClickButton2(Vector2.new())
+       end)
+       -- Periodic input simulation to prevent server-side 20-min idle kick
+       if not S._antiAfkLoopRunning then
+           S._antiAfkLoopRunning = true
+           task.spawn(function()
                local VirtualUser = game:GetService("VirtualUser")
-               VirtualUser:CaptureController()
-               VirtualUser:ClickButton2(Vector2.new())
+               while S.antiAfkEnabled do
+                   pcall(function()
+                       VirtualUser:CaptureController()
+                       VirtualUser:ClickButton2(Vector2.new())
+                   end)
+                   task.wait(60) -- simulate input every 60 seconds
+               end
+               S._antiAfkLoopRunning = false
            end)
        end
    end
@@ -1366,7 +1449,15 @@ do
        return txtLower:find("amare") or txtLower:find("subscribe") or txtLower:find("made by")
    end
    enableInvis = function()
-       if S._invisThread then return end
+       -- Force-clear any lingering thread from a previous session
+       if S._invisThread then
+           S._invisEnabled = false
+           local waitStart = tick()
+           while S._invisThread and tick() - waitStart < 1 do
+               task.wait(0.1)
+           end
+           S._invisThread = nil
+       end
        S._invisEnabled = true
        S._invisSavedPos = nil
        pcall(function() S._invisSavedPos = _Players.LocalPlayer.Character.HumanoidRootPart.Position end)
@@ -1476,6 +1567,7 @@ do
    end)
    createToggleRow("Invis", elementsList, function() return S._invisEnabled end, function()
        if not S._invisEnabled then
+           S._invisEnabled = true -- Set immediately so button visual updates
            spawnNotification("Enabling Invis, please wait...")
            task.spawn(enableInvis)
        else
@@ -1500,8 +1592,9 @@ do
        S.gemEspEnabled = not S.gemEspEnabled
        if not S.gemEspEnabled then
            for gem, _ in pairs(S.activeGemEsp) do
-               if gem and gem:FindFirstChild("BillboardGui") then
-                   pcall(function() gem.BillboardGui:Destroy() end)
+               if gem then
+                   pcall(function() if gem:FindFirstChild("BillboardGui") then gem.BillboardGui:Destroy() end end)
+                   pcall(function() if gem:FindFirstChild("GemHighlight") then gem.GemHighlight:Destroy() end end)
                end
            end
            S.activeGemEsp = {}
@@ -1529,6 +1622,16 @@ do
            end
        end
    end)
+   createToggleRow("Player ESP", elementsList, function() return S.playerEspEnabled end, function()
+       S.playerEspEnabled = not S.playerEspEnabled
+       if not S.playerEspEnabled then
+           for player, espData in pairs(S.activePlayerEsp) do
+               pcall(function() if espData.highlight then espData.highlight:Destroy() end end)
+               pcall(function() if espData.billboard then espData.billboard:Destroy() end end)
+           end
+           S.activePlayerEsp = {}
+       end
+   end)
 end
 -- Gem ESP loop (runs globally, uses cached gems to reduce FPS impact)
 task.spawn(function()
@@ -1549,12 +1652,25 @@ task.spawn(function()
                    tag.TextSize = 14
                    tag.Font = Enum.Font.GothamBold
                    tag.TextStrokeTransparency = 0.5
+                   -- Add glowing outline for listed (selected) gems
+                   if selectedGems[gemData.id] then
+                       local gemHighlight = Instance.new("Highlight")
+                       gemHighlight.Name = "GemHighlight"
+                       gemHighlight.FillColor = gemPart.Color
+                       gemHighlight.FillTransparency = 0.3
+                       gemHighlight.OutlineColor = gemPart.Color
+                       gemHighlight.OutlineTransparency = 0
+                       gemHighlight.Parent = gemPart
+                   end
                    S.activeGemEsp[gemPart] = true
                end
            end
            for gem, _ in pairs(S.activeGemEsp) do
                if not gem or not gem.Parent or gem.Transparency == 1 then
-                   if gem and gem:FindFirstChild("BillboardGui") then pcall(function() gem.BillboardGui:Destroy() end) end
+                   if gem then
+                       pcall(function() if gem:FindFirstChild("BillboardGui") then gem.BillboardGui:Destroy() end end)
+                       pcall(function() if gem:FindFirstChild("GemHighlight") then gem.GemHighlight:Destroy() end end)
+                   end
                    S.activeGemEsp[gem] = nil
                end
            end
@@ -1620,6 +1736,137 @@ task.spawn(function()
            for obj, _ in pairs(S.activeGeneralEsp) do
                if not obj or not obj.Parent then
                    S.activeGeneralEsp[obj] = nil
+               end
+           end
+       end
+       task.wait(1)
+   end
+end)
+-- Player ESP loop (highlights + usernames above heads, updates on join/die)
+task.spawn(function()
+   local function getPlayerTeamName(player)
+       local charName = player.Name
+       local unbreakable = workspace:FindFirstChild("Unbreakable")
+       local characters = unbreakable and unbreakable:FindFirstChild("Characters")
+       if not characters then return "lobby" end
+       local orcTeam = characters:FindFirstChild("Orc")
+       local humanTeam = characters:FindFirstChild("Human")
+       if orcTeam and orcTeam:FindFirstChild(charName) then return "orc" end
+       if humanTeam and humanTeam:FindFirstChild(charName) then return "human" end
+       return "lobby"
+   end
+   local function getHighlightColor(player, teamName)
+       -- Staff get golden highlight
+       local staffData = S._staffCache[player.UserId]
+       if staffData then
+           return Color3.fromRGB(255, 200, 50) -- golden
+       end
+       -- Team colors
+       if teamName == "orc" then
+           -- Try to get actual team color
+           local color = Color3.fromRGB(196, 40, 28) -- fallback red
+           pcall(function()
+               if player.Team then color = player.TeamColor.Color end
+           end)
+           return color
+       elseif teamName == "human" then
+           local color = Color3.fromRGB(13, 105, 172) -- fallback blue
+           pcall(function()
+               if player.Team then color = player.TeamColor.Color end
+           end)
+           return color
+       end
+       return Color3.new(1, 1, 1) -- lobby = white
+   end
+   local function applyPlayerEsp(player)
+       if player == _Players.LocalPlayer then return end
+       local char = player.Character
+       if not char then return end
+       local head = char:FindFirstChild("Head")
+       if not head then return end
+       -- Skip if already has ESP that's still valid
+       local existing = S.activePlayerEsp[player]
+       if existing and existing.highlight and existing.highlight.Parent and existing.billboard and existing.billboard.Parent then
+           -- Update team color and label in case team changed
+           local teamName = getPlayerTeamName(player)
+           local color = getHighlightColor(player, teamName)
+           existing.highlight.FillColor = color
+           existing.highlight.OutlineColor = color
+           -- Update name label
+           local staffData = S._staffCache[player.UserId]
+           if staffData then
+               existing.nameLabel.Text = player.Name .. "\n[" .. staffData.roleName .. "]"
+               existing.nameLabel.TextColor3 = Color3.fromRGB(255, 200, 50)
+           else
+               existing.nameLabel.Text = player.Name
+               existing.nameLabel.TextColor3 = color
+           end
+           existing.teamName = teamName
+           return
+       end
+       -- Clean up old ESP if partial
+       if existing then
+           pcall(function() if existing.highlight then existing.highlight:Destroy() end end)
+           pcall(function() if existing.billboard then existing.billboard:Destroy() end end)
+       end
+       local teamName = getPlayerTeamName(player)
+       local color = getHighlightColor(player, teamName)
+       local staffData = S._staffCache[player.UserId]
+       -- Create Highlight
+       local highlight = Instance.new("Highlight")
+       highlight.Name = "PlayerESP_Highlight"
+       highlight.FillColor = color
+       highlight.FillTransparency = 0.5
+       highlight.OutlineColor = color
+       highlight.OutlineTransparency = 0
+       highlight.Adornee = char
+       highlight.Parent = char
+       -- Create BillboardGui for name (and rank for staff)
+       local bill = Instance.new("BillboardGui")
+       bill.Name = "PlayerESP_Billboard"
+       bill.Size = UDim2.new(0, 200, 0, 50)
+       bill.StudsOffset = Vector3.new(0, 3, 0)
+       bill.AlwaysOnTop = true
+       bill.Parent = head
+       local nameLabel = Instance.new("TextLabel")
+       nameLabel.Size = UDim2.new(1, 0, 1, 0)
+       nameLabel.BackgroundTransparency = 1
+       nameLabel.Font = Enum.Font.GothamBold
+       nameLabel.TextSize = 14
+       nameLabel.TextStrokeTransparency = 0.3
+       nameLabel.Parent = bill
+       if staffData then
+           nameLabel.Text = player.Name .. "\n[" .. staffData.roleName .. "]"
+           nameLabel.TextColor3 = Color3.fromRGB(255, 200, 50)
+       else
+           nameLabel.Text = player.Name
+           nameLabel.TextColor3 = color
+       end
+       S.activePlayerEsp[player] = {
+           highlight = highlight,
+           billboard = bill,
+           nameLabel = nameLabel,
+           teamName = teamName,
+       }
+   end
+   while true do
+       if S.playerEspEnabled then
+           -- Apply ESP to all players
+           for _, player in pairs(_Players:GetPlayers()) do
+               pcall(function() applyPlayerEsp(player) end)
+           end
+           -- Cleanup ESP for players who left or whose character died/despawned
+           for player, espData in pairs(S.activePlayerEsp) do
+               local valid = false
+               pcall(function()
+                   if player and player.Parent and player.Character and player.Character:FindFirstChild("Head") then
+                       valid = true
+                   end
+               end)
+               if not valid then
+                   pcall(function() if espData.highlight then espData.highlight:Destroy() end end)
+                   pcall(function() if espData.billboard then espData.billboard:Destroy() end end)
+                   S.activePlayerEsp[player] = nil
                end
            end
        end
@@ -2031,9 +2278,9 @@ do
        end
    end)
 end
--- ======= STAFF MONITORING (FOB Admin Club Group 1162527) ======= --
+-- ======= STAFF MONITORING (FOB Admin Club Group 1162527 + Official Group 2982086 Moderators) ======= --
 do
-   local staffCache = {} -- UserId -> {rank, roleName} or false (not staff)
+   local staffCache = S._staffCache -- UserId -> {rank, roleName} or false (not staff)
    local function checkPlayer(player)
        if player == _Players.LocalPlayer then return end
        task.spawn(function()
@@ -2043,13 +2290,23 @@ do
                rank = player:GetRankInGroup(_FOB_ADMIN_GROUP_ID)
                roleName = player:GetRoleInGroup(_FOB_ADMIN_GROUP_ID)
            end)
+           -- Also check the official FOB group for Moderators rank
+           if rank == 0 then
+               pcall(function()
+                   local officialRole = player:GetRoleInGroup(_FOB_OFFICIAL_GROUP_ID)
+                   if officialRole == "Moderators" then
+                       rank = 1
+                       roleName = "Moderators"
+                   end
+               end)
+           end
            if rank > 0 then
                staffCache[player.UserId] = {rank = rank, roleName = roleName}
                if S.staffNotifyEnabled then
                    spawnNotification("STAFF ALERT: " .. player.Name .. " (" .. roleName .. ") joined!", "warning")
                end
                if S.staffKickEnabled then
-                   local kickMsg = "Someone in the FOB Admin Club joined your server. Rank: " .. roleName
+                   local kickMsg = "Staff detected in your server: " .. player.Name .. " (" .. roleName .. ")"
                    _Players.LocalPlayer:Kick(kickMsg)
                end
            else
@@ -2074,7 +2331,7 @@ do
                    if mode == "notify" then
                        spawnNotification("STAFF ALERT: " .. player.Name .. " (" .. cached.roleName .. ") is in server!", "warning")
                    elseif mode == "kick" then
-                       local kickMsg = "Someone in the FOB Admin Club is in your server. Rank: " .. cached.roleName
+                       local kickMsg = "Staff detected in your server: " .. player.Name .. " (" .. cached.roleName .. ")"
                        _Players.LocalPlayer:Kick(kickMsg)
                    end
                elseif cached == nil then
@@ -2287,7 +2544,843 @@ do
            _TweenService:Create(headerTopLine, tI, {Size = UDim2.new(0, 0, 0, 2)}):Play()
            _TweenService:Create(headerBotLine, tI, {Size = UDim2.new(0, 0, 0, 2)}):Play()
        end)
-       return sectionList
+       return sectionList, headerLabel
+   end
+
+   -- Forward-declare applyGemFarmMethod (defined in Gem section below, needed by PS Autofarm)
+   local applyGemFarmMethod
+   -- ======= PRIVATE SERVER AUTOFARM SECTION ======= --
+   local psList = createCollapsibleSection("Private Server Autofarm", elementsList)
+   do
+       local function disablePrivateServerAutofarm()
+           S.privateServerAutofarmEnabled = false
+           -- Disable general autofarm
+           S.autofarmGeneralEnabled = false
+           S.generalIsFollowing = false
+           S.generalEquipWeaponEnabled = false
+           S.generalAutoSwingEnabled = false
+           _weaponBorrowNotified["General"] = nil
+           -- Disable demon autofarm
+           S.autofarmDemonEnabled = false
+           S.demonIsFollowing = false
+           S.demonEquipWeaponEnabled = false
+           S.demonAutoSwingEnabled = false
+           _weaponBorrowNotified["Demon"] = nil
+           -- Disable NPC autofarm
+           S.autofarmNpcEnabled = false
+           S.npcIsFollowing = false
+           S.npcEquipWeaponEnabled = false
+           S.npcAutoSwingEnabled = false
+           _weaponBorrowNotified["NPC"] = nil
+           -- Disable gem autofarm
+           S.gemAutofarmEnabled = false
+           S.gemFarmEnabled = false
+           S.tweenFarmEnabled = false
+           S.gemBotEnabled = false
+           pathVisualsFolder:ClearAllChildren()
+           -- Disable invis/noclip
+           if S._invisEnabled then disableInvis() end
+           disableNoclip()
+       end
+       local psAfRow = createToggleRow("Private Server Autofarm", psList, function() return S.privateServerAutofarmEnabled end, function()
+           S.privateServerAutofarmEnabled = not S.privateServerAutofarmEnabled
+           if S.privateServerAutofarmEnabled then
+               -- Require gem method
+               if S.gemFarmMethod == "None" then
+                   spawnNotification("No gem farm method selected! Select one before enabling.", "error")
+                   S.privateServerAutofarmEnabled = false
+                   return
+               end
+               -- Turn off any existing individual autofarms first
+               if S.autofarmGeneralEnabled then
+                   S.autofarmGeneralEnabled = false
+                   S.generalIsFollowing = false
+                   S.generalEquipWeaponEnabled = false
+                   S.generalAutoSwingEnabled = false
+                   _weaponBorrowNotified["General"] = nil
+               end
+               if S.autofarmDemonEnabled then
+                   S.autofarmDemonEnabled = false
+                   S.demonIsFollowing = false
+                   S.demonEquipWeaponEnabled = false
+                   S.demonAutoSwingEnabled = false
+                   _weaponBorrowNotified["Demon"] = nil
+               end
+               if S.autofarmNpcEnabled then
+                   S.autofarmNpcEnabled = false
+                   S.npcIsFollowing = false
+                   S.npcEquipWeaponEnabled = false
+                   S.npcAutoSwingEnabled = false
+                   _weaponBorrowNotified["NPC"] = nil
+               end
+               if S.gemAutofarmEnabled then
+                   S.gemAutofarmEnabled = false
+                   S.gemFarmEnabled = false
+                   S.tweenFarmEnabled = false
+                   S.gemBotEnabled = false
+               end
+               if S._invisEnabled then disableInvis() end
+               disableNoclip()
+               task.wait(0.2)
+               -- Copy PS weapons to general, demon, and npc
+               if #S.psAutoFarmWeapons > 0 then
+                   S.generalAutoFarmWeapons = {}
+                   S.demonAutoFarmWeapons = {}
+                   S.npcAutoFarmWeapons = {}
+                   for _, w in ipairs(S.psAutoFarmWeapons) do
+                       table.insert(S.generalAutoFarmWeapons, w)
+                       table.insert(S.demonAutoFarmWeapons, w)
+                       table.insert(S.npcAutoFarmWeapons, w)
+                   end
+               end
+               -- Apply PS farm method to general, demon, and npc
+               S.generalFarmMethod = S.psFarmMethod
+               S.demonFarmMethod = S.psFarmMethod
+               S.npcFarmMethod = S.psFarmMethod
+               -- Sync tween speeds
+               S.generalTweenSpeed = S.psFarmTweenSpeed
+               S.demonTweenSpeed = S.psFarmTweenSpeed
+               S.npcTweenSpeed = S.psFarmTweenSpeed
+               enableNoclip()
+               -- Enable demon autofarm + equip + swing (highest priority, always runs)
+               S.autofarmDemonEnabled = true
+               S.demonEquipWeaponEnabled = true
+               S.demonAutoSwingEnabled = true
+               S.autoInvisDemonEnabled = S.psAutoInvisEnabled
+               S.autoReorderDemonEnabled = S.psAutoReorderEnabled
+               S.autoReorderDemonAmount = S.psAutoReorderAmount
+               -- Start equip weapon loop for demon
+               task.spawn(function()
+                   while S.privateServerAutofarmEnabled and S.demonEquipWeaponEnabled do
+                       task.wait(0.1)
+                       if S.demonIsFollowing then
+                           local weapons = resolveAutofarmWeapons("Demon")
+                           local char = _Players.LocalPlayer.Character
+                           local hum = char and char:FindFirstChildOfClass("Humanoid")
+                           if char and hum and hum.Health > 0 and #weapons > 0 then
+                               pcall(function()
+                                   for _, v in pairs(_Players.LocalPlayer.Backpack:GetChildren()) do
+                                       if table.find(weapons, v.Name) then v.Parent = char end
+                                   end
+                               end)
+                           end
+                       end
+                   end
+               end)
+               -- Start auto swing loop for demon
+               task.spawn(function()
+                   while S.privateServerAutofarmEnabled and S.demonAutoSwingEnabled do
+                       task.wait(0.1)
+                       if S.demonIsFollowing and _Players.LocalPlayer.Character then
+                           local weapons = resolveAutofarmWeapons("Demon")
+                           if #weapons > 0 then
+                               for _, v in pairs(_Players.LocalPlayer.Character:GetChildren()) do
+                                   if table.find(weapons, v.Name) then v:Activate() end
+                               end
+                           end
+                       end
+                   end
+               end)
+               -- NPC + General logic (spawned in background)
+               task.spawn(function()
+                   if not S.psFastModeEnabled then
+                       -- Kill all opposite-team NPCs first, then General
+                       S.autofarmNpcEnabled = true
+                       S.npcEquipWeaponEnabled = true
+                       S.npcAutoSwingEnabled = true
+                       S.autoInvisNpcEnabled = S.psAutoInvisEnabled
+                       S.autoReorderNpcEnabled = S.psAutoReorderEnabled
+                       S.autoReorderNpcAmount = S.psAutoReorderAmount
+                       -- Start equip weapon loop for NPC
+                       task.spawn(function()
+                           while S.privateServerAutofarmEnabled and S.npcEquipWeaponEnabled do
+                               task.wait(0.1)
+                               if S.npcIsFollowing then
+                                   local weapons = resolveAutofarmWeapons("NPC")
+                                   local char = _Players.LocalPlayer.Character
+                                   local hum = char and char:FindFirstChildOfClass("Humanoid")
+                                   if char and hum and hum.Health > 0 and #weapons > 0 then
+                                       pcall(function()
+                                           for _, v in pairs(_Players.LocalPlayer.Backpack:GetChildren()) do
+                                               if table.find(weapons, v.Name) then v.Parent = char end
+                                           end
+                                       end)
+                                   end
+                               end
+                           end
+                       end)
+                       -- Start auto swing loop for NPC
+                       task.spawn(function()
+                           while S.privateServerAutofarmEnabled and S.npcAutoSwingEnabled do
+                               task.wait(0.1)
+                               if S.npcIsFollowing and _Players.LocalPlayer.Character then
+                                   local weapons = resolveAutofarmWeapons("NPC")
+                                   if #weapons > 0 then
+                                       for _, v in pairs(_Players.LocalPlayer.Character:GetChildren()) do
+                                           if table.find(weapons, v.Name) then v:Activate() end
+                                       end
+                                   end
+                               end
+                           end
+                       end)
+                       spawnNotification("Killing enemy NPCs first, then General...")
+                       -- Wait until all enemy NPCs are dead (check periodically)
+                       while S.privateServerAutofarmEnabled and not S.psFastModeEnabled do
+                           local npcs = findEnemyNpcs()
+                           if #npcs == 0 then
+                               spawnNotification("All enemy NPCs killed! Now targeting General.")
+                               break
+                           end
+                           task.wait(1)
+                       end
+                       -- Disable NPC autofarm once all NPCs are dead
+                       if S.privateServerAutofarmEnabled then
+                           S.autofarmNpcEnabled = false
+                           S.npcIsFollowing = false
+                           S.npcEquipWeaponEnabled = false
+                           S.npcAutoSwingEnabled = false
+                       end
+                   end
+                   -- Enable general autofarm + equip + swing (after NPCs are dead, or immediately in fast mode)
+                   if S.privateServerAutofarmEnabled then
+                       S.autofarmGeneralEnabled = true
+                       S.generalEquipWeaponEnabled = true
+                       S.generalAutoSwingEnabled = true
+                       S.autoInvisEnabled = S.psAutoInvisEnabled
+                       S.autoReorderEnabled = S.psAutoReorderEnabled
+                       S.autoReorderAmount = S.psAutoReorderAmount
+                       -- Start equip weapon loop for general
+                       task.spawn(function()
+                           while S.privateServerAutofarmEnabled and S.generalEquipWeaponEnabled do
+                               task.wait(0.1)
+                               if S.generalIsFollowing then
+                                   local weapons = resolveAutofarmWeapons("General")
+                                   local char = _Players.LocalPlayer.Character
+                                   local hum = char and char:FindFirstChildOfClass("Humanoid")
+                                   if char and hum and hum.Health > 0 and #weapons > 0 then
+                                       pcall(function()
+                                           for _, v in pairs(_Players.LocalPlayer.Backpack:GetChildren()) do
+                                               if table.find(weapons, v.Name) then v.Parent = char end
+                                           end
+                                       end)
+                                   end
+                               end
+                           end
+                       end)
+                       -- Start auto swing loop for general
+                       task.spawn(function()
+                           while S.privateServerAutofarmEnabled and S.generalAutoSwingEnabled do
+                               task.wait(0.1)
+                               if S.generalIsFollowing and _Players.LocalPlayer.Character then
+                                   local weapons = resolveAutofarmWeapons("General")
+                                   if #weapons > 0 then
+                                       for _, v in pairs(_Players.LocalPlayer.Character:GetChildren()) do
+                                           if table.find(weapons, v.Name) then v:Activate() end
+                                       end
+                                   end
+                               end
+                           end
+                       end)
+                   end
+               end)
+               -- Enable gem autofarm
+               S.gemAutofarmEnabled = true
+               applyGemFarmMethod(S.gemFarmMethod)
+               if S.psFastModeEnabled then
+                   spawnNotification("Private Server Autofarm enabled! (Fast Mode) General + Demon + Gems active.")
+               else
+                   spawnNotification("Private Server Autofarm enabled! NPCs -> General + Demon + Gems active.")
+               end
+           else
+               disablePrivateServerAutofarm()
+               spawnNotification("Private Server Autofarm disabled.")
+           end
+       end)
+       psAfRow.LayoutOrder = nextOrder()
+   end
+   -- PS Autofarm: Fast Mode(ignores npcs) toggle
+   do
+       local psFastRow = createToggleRow("Fast Mode(ignores npcs)", psList, function() return S.psFastModeEnabled end, function()
+           S.psFastModeEnabled = not S.psFastModeEnabled
+           if S.psFastModeEnabled then
+               spawnNotification("Fast Mode enabled: ignoring NPCs (except General & Demon).")
+           else
+               spawnNotification("Fast Mode disabled: will target all enemy NPCs first.")
+           end
+       end)
+       psFastRow.LayoutOrder = nextOrder()
+   end
+   -- PS Autofarm: General+Demon Farm Method dropdown
+   do
+       local psFmRow, psFmIcon, psFmLabel, psFmTop, psFmBot, psFmDia = createRow("Farm Method")
+       psFmRow.LayoutOrder = nextOrder()
+       psFmRow.Parent = psList
+       applyHoverState(psFmRow, psFmIcon, psFmLabel, psFmTop, psFmBot, psFmDia, false)
+       local psFmOpenBg = Instance.new("Frame")
+       psFmOpenBg.Size = UDim2.new(0, 100, 0, 22)
+       psFmOpenBg.Position = UDim2.new(1, -115, 0.5, -11)
+       psFmOpenBg.BackgroundColor3 = Color3.fromRGB(35, 35, 35)
+       psFmOpenBg.BorderSizePixel = 0
+       psFmOpenBg.Parent = psFmRow
+       Instance.new("UICorner", psFmOpenBg).CornerRadius = UDim.new(0, 4)
+       local psFmOpenLbl = Instance.new("TextLabel")
+       psFmOpenLbl.Size = UDim2.new(1, 0, 1, 0)
+       psFmOpenLbl.BackgroundTransparency = 1
+       psFmOpenLbl.TextColor3 = Color3.new(1, 1, 1)
+       psFmOpenLbl.Text = "\226\137\161 " .. S.psFarmMethod
+       psFmOpenLbl.Font = Enum.Font.GothamMedium
+       psFmOpenLbl.TextSize = 11
+       psFmOpenLbl.TextTruncate = Enum.TextTruncate.AtEnd
+       psFmOpenLbl.Parent = psFmOpenBg
+       -- Tween Speed slider for Farm (hidden by default, animates in/out)
+       local psFmTweenContainer = Instance.new("Frame")
+       psFmTweenContainer.Size = UDim2.new(1, 0, 0, 0)
+       psFmTweenContainer.BackgroundTransparency = 1
+       psFmTweenContainer.BorderSizePixel = 0
+       psFmTweenContainer.ClipsDescendants = true
+       psFmTweenContainer.LayoutOrder = nextOrder()
+       psFmTweenContainer.Parent = psList
+       local psFmTsRow, psFmTsUpdateVal, psFmTsGetVal = createSliderRow("Tween Speed", psFmTweenContainer, S.psFarmTweenSpeed, function(val)
+           S.psFarmTweenSpeed = val
+           -- Sync to general and demon
+           if S.privateServerAutofarmEnabled then
+               S.generalTweenSpeed = val
+               S.demonTweenSpeed = val
+           end
+       end, true)
+       local psFmTweenVisible = false
+       local function showPsFmTweenSlider()
+           if psFmTweenVisible then return end
+           psFmTweenVisible = true
+           _TweenService:Create(psFmTweenContainer, TweenInfo.new(0.35, Enum.EasingStyle.Quint, Enum.EasingDirection.Out), {
+               Size = UDim2.new(1, 0, 0, 38)
+           }):Play()
+       end
+       local function hidePsFmTweenSlider()
+           if not psFmTweenVisible then return end
+           psFmTweenVisible = false
+           _TweenService:Create(psFmTweenContainer, TweenInfo.new(0.35, Enum.EasingStyle.Quint, Enum.EasingDirection.In), {
+               Size = UDim2.new(1, 0, 0, 0)
+           }):Play()
+       end
+       local psFmMethods = {"Teleport", "Tween"}
+       local _, psFmDropList, _, showPsFmDrop, hidePsFmDrop = createDraggableDropdown("PS Farm Method")
+       for idx, methodName in ipairs(psFmMethods) do
+           local item = Instance.new("TextButton")
+           item.Name = string.format("%02d", idx)
+           item.Size = UDim2.new(1, 0, 0, 24)
+           item.BorderSizePixel = 0
+           item.Font = Enum.Font.Gotham
+           item.TextColor3 = Color3.new(1, 1, 1)
+           item.TextSize = 12
+           item.TextXAlignment = Enum.TextXAlignment.Left
+           item.AutoButtonColor = false
+           item.ZIndex = 102
+           item.Parent = psFmDropList
+           Instance.new("UICorner", item).CornerRadius = UDim.new(0, 2)
+           _applySoundsToButton(item)
+           local function refreshPsFmItem()
+               if S.psFarmMethod == methodName then
+                   item.BackgroundColor3 = Color3.fromRGB(0, 150, 255)
+                   item.Text = "  \226\156\147 " .. methodName
+               else
+                   item.BackgroundColor3 = Color3.fromRGB(24, 24, 24)
+                   item.Text = "  " .. methodName
+               end
+           end
+           refreshPsFmItem()
+           item.MouseButton1Click:Connect(function()
+               _createParticleBurst(item)
+               S.psFarmMethod = methodName
+               psFmOpenLbl.Text = "\226\137\161 " .. methodName
+               -- Sync to general and demon
+               S.generalFarmMethod = methodName
+               S.demonFarmMethod = methodName
+               for _, child in pairs(psFmDropList:GetChildren()) do
+                   if child:IsA("TextButton") then
+                       local mName = child.Text:gsub("^%s*\226\156\147%s*", ""):gsub("^%s+", "")
+                       if mName == methodName then
+                           child.BackgroundColor3 = Color3.fromRGB(0, 150, 255)
+                           child.Text = "  \226\156\147 " .. mName
+                       else
+                           child.BackgroundColor3 = Color3.fromRGB(24, 24, 24)
+                           child.Text = "  " .. mName
+                       end
+                   end
+               end
+               -- Animate tween speed slider
+               if methodName == "Tween" then
+                   showPsFmTweenSlider()
+               else
+                   hidePsFmTweenSlider()
+               end
+               hidePsFmDrop()
+           end)
+           item.MouseEnter:Connect(function()
+               if S.psFarmMethod ~= methodName then item.BackgroundColor3 = Color3.fromRGB(35, 35, 35) end
+           end)
+           item.MouseLeave:Connect(function()
+               if S.psFarmMethod ~= methodName then item.BackgroundColor3 = Color3.fromRGB(24, 24, 24) end
+           end)
+       end
+       if _currentRegistryTab then table.insert(_buttonRegistry, {name = "PS Farm Method", tab = _currentRegistryTab, type = "special", onClickFn = function() showPsFmDrop() end}) end
+       psFmRow.MouseButton1Click:Connect(function()
+           _createParticleBurst(psFmRow)
+           showPsFmDrop()
+       end)
+       -- Initialize tween slider visibility
+       if S.psFarmMethod == "Tween" then
+           psFmTweenContainer.Size = UDim2.new(1, 0, 0, 38)
+           psFmTweenVisible = true
+       end
+   end
+   -- PS Autofarm: Auto Invis toggle
+   do
+       local psInvisRow = createToggleRow("Auto Invis", psList, function() return S.psAutoInvisEnabled end, function()
+           S.psAutoInvisEnabled = not S.psAutoInvisEnabled
+           -- Sync to underlying autofarms if PS is active
+           if S.privateServerAutofarmEnabled then
+               S.autoInvisEnabled = S.psAutoInvisEnabled
+               S.autoInvisDemonEnabled = S.psAutoInvisEnabled
+               if not S.psAutoInvisEnabled and S._invisEnabled then
+                   disableInvis()
+               end
+           end
+       end)
+       psInvisRow.LayoutOrder = nextOrder()
+   end
+   -- PS Autofarm: Auto AutoDupe toggle
+   do
+       local psDupeRow = createToggleRow("Auto AutoDupe", psList, function() return S.psAutoReorderEnabled end, function()
+           S.psAutoReorderEnabled = not S.psAutoReorderEnabled
+           -- Sync to underlying autofarms if PS is active
+           if S.privateServerAutofarmEnabled then
+               S.autoReorderEnabled = S.psAutoReorderEnabled
+               S.autoReorderDemonEnabled = S.psAutoReorderEnabled
+           end
+       end)
+       psDupeRow.LayoutOrder = nextOrder()
+   end
+   -- PS Autofarm: AutoDupe Amount slider
+   do
+       local psDupeSliderRow = createSliderRow("AutoDupe Amount", psList, 1, function(val)
+           S.psAutoReorderAmount = val
+           -- Sync to underlying autofarms if PS is active
+           if S.privateServerAutofarmEnabled then
+               S.autoReorderAmount = val
+               S.autoReorderDemonAmount = val
+           end
+       end)
+       psDupeSliderRow.LayoutOrder = nextOrder()
+   end
+   -- PS Autofarm: Weapons for AutoFarming dropdown (moved here, under dupe slider)
+   do
+       local psWafRow, psWafIcon, psWafLabel, psWafTop, psWafBot, psWafDia = createRow("Weapons for AutoFarming")
+       psWafRow.LayoutOrder = nextOrder()
+       psWafRow.Parent = psList
+       applyHoverState(psWafRow, psWafIcon, psWafLabel, psWafTop, psWafBot, psWafDia, false)
+       local psWafOpenBg = Instance.new("Frame")
+       psWafOpenBg.Size = UDim2.new(0, 90, 0, 22)
+       psWafOpenBg.Position = UDim2.new(1, -105, 0.5, -11)
+       psWafOpenBg.BackgroundColor3 = Color3.fromRGB(35, 35, 35)
+       psWafOpenBg.BorderSizePixel = 0
+       psWafOpenBg.Parent = psWafRow
+       Instance.new("UICorner", psWafOpenBg).CornerRadius = UDim.new(0, 4)
+       local psWafOpenLbl = Instance.new("TextLabel")
+       psWafOpenLbl.Size = UDim2.new(1, 0, 1, 0)
+       psWafOpenLbl.BackgroundTransparency = 1
+       psWafOpenLbl.TextColor3 = Color3.new(1, 1, 1)
+       psWafOpenLbl.Text = "\226\137\161 SELECT"
+       psWafOpenLbl.Font = Enum.Font.GothamMedium
+       psWafOpenLbl.TextSize = 11
+       psWafOpenLbl.TextTruncate = Enum.TextTruncate.AtEnd
+       psWafOpenLbl.Parent = psWafOpenBg
+       local _, psWafDropList, _, showPsWafDrop, hidePsWafDrop = createDraggableDropdown("PS Weapons")
+       local function updatePsWeaponText()
+           if #S.psAutoFarmWeapons == 0 then psWafOpenLbl.Text = "\226\137\161 SELECT"
+           elseif #S.psAutoFarmWeapons == 1 then psWafOpenLbl.Text = "\226\137\161 " .. S.psAutoFarmWeapons[1]
+           else psWafOpenLbl.Text = "\226\137\161 " .. #S.psAutoFarmWeapons .. " Selected" end
+       end
+       local function updatePsWeaponDropdown()
+           for _, child in pairs(psWafDropList:GetChildren()) do
+               if child:IsA("TextButton") then child:Destroy() end
+           end
+           local tools = {}
+           for _, item in pairs(_Players.LocalPlayer.Backpack:GetChildren()) do
+               if item:IsA("Tool") and not table.find(tools, item.Name) then table.insert(tools, item.Name) end
+           end
+           if _Players.LocalPlayer.Character then
+               for _, item in pairs(_Players.LocalPlayer.Character:GetChildren()) do
+                   if item:IsA("Tool") and not table.find(tools, item.Name) then table.insert(tools, item.Name) end
+               end
+           end
+           for _, toolName in pairs(tools) do
+               local item = Instance.new("TextButton")
+               item.Name = toolName
+               item.Parent = psWafDropList
+               item.BorderSizePixel = 0
+               item.Size = UDim2.new(1, 0, 0, 24)
+               item.Font = Enum.Font.Gotham
+               item.TextColor3 = Color3.new(1, 1, 1)
+               item.TextSize = 12
+               item.TextXAlignment = Enum.TextXAlignment.Left
+               item.AutoButtonColor = false
+               item.ZIndex = 102
+               Instance.new("UICorner", item).CornerRadius = UDim.new(0, 2)
+               _applySoundsToButton(item)
+               local isSelected = table.find(S.psAutoFarmWeapons, toolName) ~= nil
+               item.BackgroundColor3 = isSelected and Color3.fromRGB(0, 150, 255) or Color3.fromRGB(24, 24, 24)
+               item.Text = isSelected and ("  \226\156\147 " .. toolName) or ("  " .. toolName)
+               item.MouseButton1Click:Connect(function()
+                   _createParticleBurst(item)
+                   local idx = table.find(S.psAutoFarmWeapons, toolName)
+                   if idx then
+                       table.remove(S.psAutoFarmWeapons, idx)
+                       item.BackgroundColor3 = Color3.fromRGB(24, 24, 24)
+                       item.Text = "  " .. toolName
+                   else
+                       table.insert(S.psAutoFarmWeapons, toolName)
+                       item.BackgroundColor3 = Color3.fromRGB(0, 150, 255)
+                       item.Text = "  \226\156\147 " .. toolName
+                   end
+                   updatePsWeaponText()
+                   -- Also sync to general, demon, and npc weapon lists
+                   S.generalAutoFarmWeapons = {}
+                   S.demonAutoFarmWeapons = {}
+                   S.npcAutoFarmWeapons = {}
+                   for _, w in ipairs(S.psAutoFarmWeapons) do
+                       table.insert(S.generalAutoFarmWeapons, w)
+                       table.insert(S.demonAutoFarmWeapons, w)
+                       table.insert(S.npcAutoFarmWeapons, w)
+                   end
+               end)
+               item.MouseEnter:Connect(function()
+                   if not table.find(S.psAutoFarmWeapons, toolName) then item.BackgroundColor3 = Color3.fromRGB(35, 35, 35) end
+               end)
+               item.MouseLeave:Connect(function()
+                   if not table.find(S.psAutoFarmWeapons, toolName) then item.BackgroundColor3 = Color3.fromRGB(24, 24, 24) end
+               end)
+           end
+       end
+       if _currentRegistryTab then table.insert(_buttonRegistry, {name = "PS Weapons for AutoFarming", tab = _currentRegistryTab, type = "special", onClickFn = function() updatePsWeaponDropdown(); showPsWafDrop() end}) end
+       psWafRow.MouseButton1Click:Connect(function()
+           _createParticleBurst(psWafRow)
+           updatePsWeaponDropdown()
+           showPsWafDrop()
+       end)
+   end
+   -- PS Autofarm: Gem Farm Method dropdown (shares S.gemFarmMethod)
+   do
+       local psGmRow, psGmIcon, psGmLabel, psGmTop, psGmBot, psGmDia = createRow("Gem Farm Method")
+       psGmRow.LayoutOrder = nextOrder()
+       psGmRow.Parent = psList
+       applyHoverState(psGmRow, psGmIcon, psGmLabel, psGmTop, psGmBot, psGmDia, false)
+       local psGmOpenBg = Instance.new("Frame")
+       psGmOpenBg.Size = UDim2.new(0, 100, 0, 22)
+       psGmOpenBg.Position = UDim2.new(1, -115, 0.5, -11)
+       psGmOpenBg.BackgroundColor3 = Color3.fromRGB(35, 35, 35)
+       psGmOpenBg.BorderSizePixel = 0
+       psGmOpenBg.Parent = psGmRow
+       Instance.new("UICorner", psGmOpenBg).CornerRadius = UDim.new(0, 4)
+       local psGmOpenLbl = Instance.new("TextLabel")
+       psGmOpenLbl.Size = UDim2.new(1, 0, 1, 0)
+       psGmOpenLbl.BackgroundTransparency = 1
+       psGmOpenLbl.TextColor3 = Color3.new(1, 1, 1)
+       psGmOpenLbl.Text = "\226\137\161 " .. S.gemFarmMethod
+       psGmOpenLbl.Font = Enum.Font.GothamMedium
+       psGmOpenLbl.TextSize = 11
+       psGmOpenLbl.TextTruncate = Enum.TextTruncate.AtEnd
+       psGmOpenLbl.Parent = psGmOpenBg
+       -- Tween Speed slider for Gem (hidden by default, animates in/out)
+       local psGmTweenContainer = Instance.new("Frame")
+       psGmTweenContainer.Size = UDim2.new(1, 0, 0, 0)
+       psGmTweenContainer.BackgroundTransparency = 1
+       psGmTweenContainer.BorderSizePixel = 0
+       psGmTweenContainer.ClipsDescendants = true
+       psGmTweenContainer.LayoutOrder = nextOrder()
+       psGmTweenContainer.Parent = psList
+       local psGmTsRow, psGmTsUpdateVal, psGmTsGetVal = createSliderRow("Tween Speed", psGmTweenContainer, S.gemTweenSpeed, function(val) S.gemTweenSpeed = val end, true)
+       local psGmTweenVisible = false
+       local function showPsGmTweenSlider()
+           if psGmTweenVisible then return end
+           psGmTweenVisible = true
+           _TweenService:Create(psGmTweenContainer, TweenInfo.new(0.35, Enum.EasingStyle.Quint, Enum.EasingDirection.Out), {
+               Size = UDim2.new(1, 0, 0, 38)
+           }):Play()
+       end
+       local function hidePsGmTweenSlider()
+           if not psGmTweenVisible then return end
+           psGmTweenVisible = false
+           _TweenService:Create(psGmTweenContainer, TweenInfo.new(0.35, Enum.EasingStyle.Quint, Enum.EasingDirection.In), {
+               Size = UDim2.new(1, 0, 0, 0)
+           }):Play()
+       end
+       local psGemMethods = {"None", "Smart Bot", "Tween Farm", "Teleport"}
+       local _, psGmDropList, _, showPsGmDrop, hidePsGmDrop = createDraggableDropdown("PS Gem Farm Method")
+       for idx, methodName in ipairs(psGemMethods) do
+           local item = Instance.new("TextButton")
+           item.Name = string.format("%02d", idx)
+           item.Size = UDim2.new(1, 0, 0, 24)
+           item.BorderSizePixel = 0
+           item.Font = Enum.Font.Gotham
+           item.TextColor3 = Color3.new(1, 1, 1)
+           item.TextSize = 12
+           item.TextXAlignment = Enum.TextXAlignment.Left
+           item.AutoButtonColor = false
+           item.ZIndex = 102
+           item.Parent = psGmDropList
+           Instance.new("UICorner", item).CornerRadius = UDim.new(0, 2)
+           _applySoundsToButton(item)
+           local function refreshPsMethodItem()
+               if S.gemFarmMethod == methodName then
+                   item.BackgroundColor3 = Color3.fromRGB(0, 150, 255)
+                   item.Text = "  \226\156\147 " .. methodName
+               else
+                   item.BackgroundColor3 = Color3.fromRGB(24, 24, 24)
+                   item.Text = "  " .. methodName
+               end
+           end
+           refreshPsMethodItem()
+           item.MouseButton1Click:Connect(function()
+               _createParticleBurst(item)
+               S.gemFarmMethod = methodName
+               psGmOpenLbl.Text = "\226\137\161 " .. methodName
+               if S.privateServerAutofarmEnabled then
+                   applyGemFarmMethod(methodName)
+                   if methodName ~= "None" then
+                       S.gemAutofarmEnabled = true
+                   end
+               end
+               for _, child in pairs(psGmDropList:GetChildren()) do
+                   if child:IsA("TextButton") then
+                       local mName = child.Text:gsub("^%s*\226\156\147%s*", ""):gsub("^%s+", "")
+                       if mName == methodName then
+                           child.BackgroundColor3 = Color3.fromRGB(0, 150, 255)
+                           child.Text = "  \226\156\147 " .. mName
+                       else
+                           child.BackgroundColor3 = Color3.fromRGB(24, 24, 24)
+                           child.Text = "  " .. mName
+                       end
+                   end
+               end
+               -- Animate gem tween speed slider
+               if methodName == "Tween Farm" then
+                   showPsGmTweenSlider()
+               else
+                   hidePsGmTweenSlider()
+               end
+               hidePsGmDrop()
+           end)
+           item.MouseEnter:Connect(function()
+               if S.gemFarmMethod ~= methodName then item.BackgroundColor3 = Color3.fromRGB(35, 35, 35) end
+           end)
+           item.MouseLeave:Connect(function()
+               if S.gemFarmMethod ~= methodName then item.BackgroundColor3 = Color3.fromRGB(24, 24, 24) end
+           end)
+       end
+       if _currentRegistryTab then table.insert(_buttonRegistry, {name = "PS Gem Farm Method", tab = _currentRegistryTab, type = "special", onClickFn = function() showPsGmDrop() end}) end
+       psGmRow.MouseButton1Click:Connect(function()
+           _createParticleBurst(psGmRow)
+           showPsGmDrop()
+       end)
+       -- Initialize gem tween slider visibility
+       if S.gemFarmMethod == "Tween Farm" then
+           psGmTweenContainer.Size = UDim2.new(1, 0, 0, 38)
+           psGmTweenVisible = true
+       end
+   end
+   -- PS Autofarm: Select Gems dropdown (shares selectedGems)
+   do
+       local psGRow, psGIcon, psGLabel, psGTop, psGBot, psGDia = createRow("Select Gems")
+       psGRow.LayoutOrder = nextOrder()
+       psGRow.Parent = psList
+       applyHoverState(psGRow, psGIcon, psGLabel, psGTop, psGBot, psGDia, false)
+       local psGOpenBg = Instance.new("Frame")
+       psGOpenBg.Size = UDim2.new(0, 90, 0, 22)
+       psGOpenBg.Position = UDim2.new(1, -105, 0.5, -11)
+       psGOpenBg.BackgroundColor3 = Color3.fromRGB(35, 35, 35)
+       psGOpenBg.BorderSizePixel = 0
+       psGOpenBg.Parent = psGRow
+       Instance.new("UICorner", psGOpenBg).CornerRadius = UDim.new(0, 4)
+       local psGOpenLbl = Instance.new("TextLabel")
+       psGOpenLbl.Size = UDim2.new(1, 0, 1, 0)
+       psGOpenLbl.BackgroundTransparency = 1
+       psGOpenLbl.TextColor3 = Color3.new(1, 1, 1)
+       psGOpenLbl.Font = Enum.Font.GothamMedium
+       psGOpenLbl.TextSize = 11
+       psGOpenLbl.TextTruncate = Enum.TextTruncate.AtEnd
+       psGOpenLbl.Parent = psGOpenBg
+       local function updatePsGemText()
+           local count, total, lastName = 0, 0, ""
+           for id, name in pairs(gemValues) do
+               total = total + 1
+               if selectedGems[id] then count = count + 1 lastName = name end
+           end
+           if count == 0 then psGOpenLbl.Text = "\226\137\161 NONE"
+           elseif count == total then psGOpenLbl.Text = "\226\137\161 ALL"
+           elseif count == 1 then psGOpenLbl.Text = "\226\137\161 " .. lastName
+           else psGOpenLbl.Text = "\226\137\161 " .. count .. " Selected" end
+       end
+       updatePsGemText()
+       local _, psGemDropList, _, showPsGemDrop, hidePsGemDrop = createDraggableDropdown("PS Select Gems")
+       local psGemSortedIds = {}
+       for id in pairs(gemValues) do table.insert(psGemSortedIds, id) end
+       table.sort(psGemSortedIds)
+       for sortIdx, gemId in ipairs(psGemSortedIds) do
+           local gemName = gemValues[gemId]
+           local item = Instance.new("TextButton")
+           item.Name = string.format("%02d", sortIdx)
+           item.Size = UDim2.new(1, 0, 0, 24)
+           item.BorderSizePixel = 0
+           item.Font = Enum.Font.Gotham
+           item.TextColor3 = Color3.new(1, 1, 1)
+           item.TextSize = 12
+           item.TextXAlignment = Enum.TextXAlignment.Left
+           item.AutoButtonColor = false
+           item.ZIndex = 102
+           item.Parent = psGemDropList
+           Instance.new("UICorner", item).CornerRadius = UDim.new(0, 2)
+           _applySoundsToButton(item)
+           local function refreshPsGemItem()
+               if selectedGems[gemId] then
+                   item.BackgroundColor3 = Color3.fromRGB(0, 150, 255)
+                   item.Text = "  \226\156\147 " .. gemName
+               else
+                   item.BackgroundColor3 = Color3.fromRGB(24, 24, 24)
+                   item.Text = "  " .. gemName
+               end
+           end
+           refreshPsGemItem()
+           item.MouseButton1Click:Connect(function()
+               _createParticleBurst(item)
+               selectedGems[gemId] = not selectedGems[gemId]
+               refreshPsGemItem()
+               updatePsGemText()
+           end)
+           item.MouseEnter:Connect(function()
+               if not selectedGems[gemId] then item.BackgroundColor3 = Color3.fromRGB(35, 35, 35) end
+           end)
+           item.MouseLeave:Connect(function()
+               if not selectedGems[gemId] then item.BackgroundColor3 = Color3.fromRGB(24, 24, 24) end
+           end)
+       end
+       if _currentRegistryTab then table.insert(_buttonRegistry, {name = "PS Select Gems", tab = _currentRegistryTab, type = "special", onClickFn = function() showPsGemDrop() end}) end
+       psGRow.MouseButton1Click:Connect(function()
+           _createParticleBurst(psGRow)
+           showPsGemDrop()
+       end)
+   end
+   -- PS Autofarm: Target Unknowns toggle (shares S.gemTargetUnknowns)
+   do
+       local psTargetUnkRow = createToggleRow("Target Unknowns", psList, function() return S.gemTargetUnknowns end, function()
+           S.gemTargetUnknowns = not S.gemTargetUnknowns
+       end)
+       psTargetUnkRow.LayoutOrder = nextOrder()
+   end
+   -- PS Autofarm: Discord Webhook Tracker (toggle + URL input)
+   do
+       -- Main row (toggle on/off)
+       local whRow = createToggleRow("Discord Webhook Tracker", psList, function() return S.psWebhookEnabled end, function()
+           S.psWebhookEnabled = not S.psWebhookEnabled
+           if S.psWebhookEnabled then
+               if S.psWebhookUrl == "" or not S.psWebhookUrl:match("^https://discord%.com/api/webhooks/") then
+                   spawnNotification("Please enter a valid Discord webhook URL below first!", "error")
+                   S.psWebhookEnabled = false
+                   return
+               end
+               if not _webhookValidated then
+                   -- Validate the webhook by sending a test message
+                   local ok = sendDiscordWebhook(S.psWebhookUrl, {
+                       content = "Webhook FOB validation test"
+                   })
+                   if ok then
+                       _webhookValidated = true
+                       spawnNotification("Now tracking your earnings", "success")
+                       resetWebhookStats()
+                   else
+                       spawnNotification("Webhook validation failed! Check your URL.", "error")
+                       S.psWebhookEnabled = false
+                       return
+                   end
+               else
+                   spawnNotification("Now tracking your earnings", "success")
+                   resetWebhookStats()
+               end
+           else
+               _webhookValidated = false
+               spawnNotification("Webhook tracking disabled.")
+           end
+       end)
+       whRow.LayoutOrder = nextOrder()
+       -- URL input row (appears below the toggle)
+       local whUrlRow = Instance.new("TextButton")
+       whUrlRow.Size = UDim2.new(1, 0, 0, 38)
+       whUrlRow.BackgroundColor3 = Color3.fromRGB(24, 24, 24)
+       whUrlRow.BorderSizePixel = 0
+       whUrlRow.AutoButtonColor = false
+       whUrlRow.Text = ""
+       whUrlRow.LayoutOrder = nextOrder()
+       whUrlRow.Parent = psList
+       Instance.new("UICorner", whUrlRow).CornerRadius = UDim.new(0, 6)
+       local whUrlIcon = Instance.new("Frame")
+       whUrlIcon.Size = UDim2.new(0, 14, 0, 14)
+       whUrlIcon.Position = UDim2.new(0, 24, 0.5, -7)
+       whUrlIcon.BackgroundColor3 = Color3.fromRGB(114, 137, 218) -- Discord blurple
+       whUrlIcon.BorderSizePixel = 0
+       whUrlIcon.Parent = whUrlRow
+       Instance.new("UICorner", whUrlIcon).CornerRadius = UDim.new(0, 2)
+       local whUrlBox = Instance.new("TextBox")
+       whUrlBox.Size = UDim2.new(1, -60, 1, -8)
+       whUrlBox.Position = UDim2.new(0, 50, 0, 4)
+       whUrlBox.BackgroundColor3 = Color3.fromRGB(18, 18, 18)
+       whUrlBox.BorderSizePixel = 1
+       whUrlBox.BorderColor3 = Color3.fromRGB(45, 45, 45)
+       whUrlBox.TextColor3 = Color3.new(0.8, 0.8, 0.8)
+       whUrlBox.PlaceholderText = "Put Discord webhook URL here"
+       whUrlBox.PlaceholderColor3 = Color3.fromRGB(90, 90, 90)
+       whUrlBox.Text = S.psWebhookUrl
+       whUrlBox.Font = Enum.Font.GothamMedium
+       whUrlBox.TextSize = 11
+       whUrlBox.TextXAlignment = Enum.TextXAlignment.Left
+       whUrlBox.ClearTextOnFocus = false
+       whUrlBox.ClipsDescendants = true
+       whUrlBox.Parent = whUrlRow
+       Instance.new("UICorner", whUrlBox).CornerRadius = UDim.new(0, 4)
+       Instance.new("UIPadding", whUrlBox).PaddingLeft = UDim.new(0, 6)
+       whUrlBox.FocusLost:Connect(function(enterPressed)
+           local url = whUrlBox.Text:match("^%s*(.-)%s*$") -- trim whitespace
+           S.psWebhookUrl = url
+           _webhookValidated = false
+           if url ~= "" and url:match("^https://discord%.com/api/webhooks/") then
+               whUrlIcon.BackgroundColor3 = Color3.fromRGB(50, 200, 80) -- green = valid format
+               if S.psWebhookEnabled then
+                   -- Re-validate with test message
+                   local ok = sendDiscordWebhook(url, {
+                       content = "Webhook FOB validation test"
+                   })
+                   if ok then
+                       _webhookValidated = true
+                       spawnNotification("Now tracking your earnings", "success")
+                       resetWebhookStats()
+                   else
+                       spawnNotification("Webhook validation failed! Check your URL.", "error")
+                       S.psWebhookEnabled = false
+                   end
+               end
+           elseif url ~= "" then
+               whUrlIcon.BackgroundColor3 = Color3.fromRGB(255, 50, 50) -- red = invalid
+               spawnNotification("Invalid webhook URL format. Must start with https://discord.com/api/webhooks/", "error")
+           else
+               whUrlIcon.BackgroundColor3 = Color3.fromRGB(114, 137, 218) -- default blurple
+           end
+       end)
+       -- Hover effects for URL row
+       whUrlRow.MouseEnter:Connect(function()
+           _TweenService:Create(whUrlRow, TweenInfo.new(0.2), {BackgroundColor3 = Color3.fromRGB(35, 35, 35)}):Play()
+       end)
+       whUrlRow.MouseLeave:Connect(function()
+           _TweenService:Create(whUrlRow, TweenInfo.new(0.2), {BackgroundColor3 = Color3.fromRGB(24, 24, 24)}):Play()
+       end)
    end
 
    -- ======= GEM SETTINGS SECTION ======= --
@@ -2343,7 +3436,7 @@ do
        end
    end
     -- ======= GEM AUTOFARM TOGGLE ======= --
-   local function applyGemFarmMethod(method)
+   applyGemFarmMethod = function(method)
        S.gemFarmMethod = method
        S.gemFarmEnabled = false
        S.tweenFarmEnabled = false
@@ -2831,10 +3924,13 @@ do
                        if S.generalIsFollowing then
                            local weapons = resolveAutofarmWeapons("General")
                            local char = _Players.LocalPlayer.Character
-                           if char and #weapons > 0 then
-                               for _, v in pairs(_Players.LocalPlayer.Backpack:GetChildren()) do
-                                   if table.find(weapons, v.Name) then v.Parent = char end
-                               end
+                           local hum = char and char:FindFirstChildOfClass("Humanoid")
+                           if char and hum and hum.Health > 0 and #weapons > 0 then
+                               pcall(function()
+                                   for _, v in pairs(_Players.LocalPlayer.Backpack:GetChildren()) do
+                                       if table.find(weapons, v.Name) then v.Parent = char end
+                                   end
+                               end)
                            end
                        end
                    end
@@ -3114,10 +4210,13 @@ do
                        if S.demonIsFollowing then
                            local weapons = resolveAutofarmWeapons("Demon")
                            local char = _Players.LocalPlayer.Character
-                           if char and #weapons > 0 then
-                               for _, v in pairs(_Players.LocalPlayer.Backpack:GetChildren()) do
-                                   if table.find(weapons, v.Name) then v.Parent = char end
-                               end
+                           local hum = char and char:FindFirstChildOfClass("Humanoid")
+                           if char and hum and hum.Health > 0 and #weapons > 0 then
+                               pcall(function()
+                                   for _, v in pairs(_Players.LocalPlayer.Backpack:GetChildren()) do
+                                       if table.find(weapons, v.Name) then v.Parent = char end
+                                   end
+                               end)
                            end
                        end
                    end
@@ -3397,10 +4496,13 @@ do
                        if S.npcIsFollowing then
                            local weapons = resolveAutofarmWeapons("NPC")
                            local char = _Players.LocalPlayer.Character
-                           if char and #weapons > 0 then
-                               for _, v in pairs(_Players.LocalPlayer.Backpack:GetChildren()) do
-                                   if table.find(weapons, v.Name) then v.Parent = char end
-                               end
+                           local hum = char and char:FindFirstChildOfClass("Humanoid")
+                           if char and hum and hum.Health > 0 and #weapons > 0 then
+                               pcall(function()
+                                   for _, v in pairs(_Players.LocalPlayer.Backpack:GetChildren()) do
+                                       if table.find(weapons, v.Name) then v.Parent = char end
+                                   end
+                               end)
                            end
                        end
                    end
@@ -3430,6 +4532,323 @@ do
            end
        end)
        npcSwingRow.LayoutOrder = nextOrder()
+   end
+
+   -- ======= EGG AUTOFARM SECTION ======= --
+   local eggList, _eggHeaderLabel = createCollapsibleSection("Egg Settings", elementsList)
+   -- Easter-themed rainbow colors for "Egg Settings" header
+   do
+       local easterColors = {
+           {255, 105, 180}, -- pink
+           {186, 85, 211},  -- purple
+           {100, 149, 237}, -- blue
+           {0, 206, 209},   -- teal
+           {144, 238, 144}, -- green
+           {255, 255, 100}, -- yellow
+           {255, 165, 0},   -- orange
+       }
+       _eggHeaderLabel.RichText = true
+       local eggTitle = "Egg Settings"
+       local richParts = {}
+       local cIdx = 1
+       for i = 1, #eggTitle do
+           local ch = eggTitle:sub(i, i)
+           if ch == " " then
+               table.insert(richParts, " ")
+           else
+               local c = easterColors[((cIdx - 1) % #easterColors) + 1]
+               table.insert(richParts, string.format('<font color="#%02x%02x%02x">%s</font>', c[1], c[2], c[3], ch))
+               cIdx = cIdx + 1
+           end
+       end
+       _eggHeaderLabel.Text = table.concat(richParts)
+   end
+   -- Autofarm Egg toggle
+   do
+       local afEggRow = createToggleRow("Egg Autofarm", eggList, function() return S.eggAutofarmEnabled end, function()
+           S.eggAutofarmEnabled = not S.eggAutofarmEnabled
+           if not S.eggAutofarmEnabled then
+               S.eggIsFollowing = false
+               S.eggEquipWeaponEnabled = false
+               S.eggAutoSwingEnabled = false
+               disableNoclip()
+               if S.eggAutoInvisEnabled and S._invisEnabled then disableInvis() end
+           else
+               enableNoclip()
+           end
+       end)
+       afEggRow.LayoutOrder = nextOrder()
+   end
+   -- ======= EGG FARM METHOD DROPDOWN ======= --
+   do
+       local gmEggRow, gmEggIcon, gmEggLabel, gmEggTop, gmEggBot, gmEggDia = createRow("Egg Farm Method")
+       gmEggRow.LayoutOrder = nextOrder()
+       gmEggRow.Parent = eggList
+       applyHoverState(gmEggRow, gmEggIcon, gmEggLabel, gmEggTop, gmEggBot, gmEggDia, false)
+       local gmEggOpenBg = Instance.new("Frame")
+       gmEggOpenBg.Size = UDim2.new(0, 100, 0, 22)
+       gmEggOpenBg.Position = UDim2.new(1, -115, 0.5, -11)
+       gmEggOpenBg.BackgroundColor3 = Color3.fromRGB(35, 35, 35)
+       gmEggOpenBg.BorderSizePixel = 0
+       gmEggOpenBg.Parent = gmEggRow
+       Instance.new("UICorner", gmEggOpenBg).CornerRadius = UDim.new(0, 4)
+       local gmEggOpenLbl = Instance.new("TextLabel")
+       gmEggOpenLbl.Size = UDim2.new(1, 0, 1, 0)
+       gmEggOpenLbl.BackgroundTransparency = 1
+       gmEggOpenLbl.TextColor3 = Color3.new(1, 1, 1)
+       gmEggOpenLbl.Text = "\226\137\161 " .. S.eggFarmMethod
+       gmEggOpenLbl.Font = Enum.Font.GothamMedium
+       gmEggOpenLbl.TextSize = 11
+       gmEggOpenLbl.TextTruncate = Enum.TextTruncate.AtEnd
+       gmEggOpenLbl.Parent = gmEggOpenBg
+       -- Tween Speed slider (hidden by default, animates in/out)
+       local eggTweenSpeedContainer = Instance.new("Frame")
+       eggTweenSpeedContainer.Size = UDim2.new(1, 0, 0, 0)
+       eggTweenSpeedContainer.BackgroundTransparency = 1
+       eggTweenSpeedContainer.BorderSizePixel = 0
+       eggTweenSpeedContainer.ClipsDescendants = true
+       eggTweenSpeedContainer.LayoutOrder = nextOrder()
+       eggTweenSpeedContainer.Parent = eggList
+       local eggTsRow, eggTsUpdateVal, eggTsGetVal = createSliderRow("Tween Speed", eggTweenSpeedContainer, S.eggTweenSpeed, function(val) S.eggTweenSpeed = val end, true)
+       local eggTweenSliderVisible = false
+       local function showEggTweenSlider()
+           if eggTweenSliderVisible then return end
+           eggTweenSliderVisible = true
+           _TweenService:Create(eggTweenSpeedContainer, TweenInfo.new(0.35, Enum.EasingStyle.Quint, Enum.EasingDirection.Out), {
+               Size = UDim2.new(1, 0, 0, 38)
+           }):Play()
+       end
+       local function hideEggTweenSlider()
+           if not eggTweenSliderVisible then return end
+           eggTweenSliderVisible = false
+           _TweenService:Create(eggTweenSpeedContainer, TweenInfo.new(0.35, Enum.EasingStyle.Quint, Enum.EasingDirection.In), {
+               Size = UDim2.new(1, 0, 0, 0)
+           }):Play()
+       end
+       -- Method options dropdown
+       local eggMethods = {"Teleport", "Tween"}
+       local _, gmEggDropList, _, showGmEggDrop, hideGmEggDrop = createDraggableDropdown("Egg Farm Method")
+       for idx, methodName in ipairs(eggMethods) do
+           local item = Instance.new("TextButton")
+           item.Name = string.format("%02d", idx)
+           item.Size = UDim2.new(1, 0, 0, 24)
+           item.BorderSizePixel = 0
+           item.Font = Enum.Font.Gotham
+           item.TextColor3 = Color3.new(1, 1, 1)
+           item.TextSize = 12
+           item.TextXAlignment = Enum.TextXAlignment.Left
+           item.AutoButtonColor = false
+           item.ZIndex = 102
+           item.Parent = gmEggDropList
+           Instance.new("UICorner", item).CornerRadius = UDim.new(0, 2)
+           _applySoundsToButton(item)
+           local function refreshEggMethodItem()
+               if S.eggFarmMethod == methodName then
+                   item.BackgroundColor3 = Color3.fromRGB(0, 150, 255)
+                   item.Text = "  \226\156\147 " .. methodName
+               else
+                   item.BackgroundColor3 = Color3.fromRGB(24, 24, 24)
+                   item.Text = "  " .. methodName
+               end
+           end
+           refreshEggMethodItem()
+           item.MouseButton1Click:Connect(function()
+               _createParticleBurst(item)
+               S.eggFarmMethod = methodName
+               gmEggOpenLbl.Text = "\226\137\161 " .. methodName
+               for _, child in pairs(gmEggDropList:GetChildren()) do
+                   if child:IsA("TextButton") then
+                       local mName = child.Text:gsub("^%s*\226\156\147%s*", ""):gsub("^%s+", "")
+                       if mName == methodName then
+                           child.BackgroundColor3 = Color3.fromRGB(0, 150, 255)
+                           child.Text = "  \226\156\147 " .. mName
+                       else
+                           child.BackgroundColor3 = Color3.fromRGB(24, 24, 24)
+                           child.Text = "  " .. mName
+                       end
+                   end
+               end
+               if methodName == "Tween" then
+                   showEggTweenSlider()
+               else
+                   hideEggTweenSlider()
+               end
+               hideGmEggDrop()
+           end)
+           item.MouseEnter:Connect(function()
+               if S.eggFarmMethod ~= methodName then item.BackgroundColor3 = Color3.fromRGB(35, 35, 35) end
+           end)
+           item.MouseLeave:Connect(function()
+               if S.eggFarmMethod ~= methodName then item.BackgroundColor3 = Color3.fromRGB(24, 24, 24) end
+           end)
+       end
+       if _currentRegistryTab then table.insert(_buttonRegistry, {name = "Egg Farm Method", tab = _currentRegistryTab, type = "special", onClickFn = function() showGmEggDrop() end}) end
+       gmEggRow.MouseButton1Click:Connect(function()
+           _createParticleBurst(gmEggRow)
+           showGmEggDrop()
+       end)
+       -- Initialize tween slider visibility
+       if S.eggFarmMethod == "Tween" then
+           eggTweenSpeedContainer.Size = UDim2.new(1, 0, 0, 38)
+           eggTweenSliderVisible = true
+       end
+   end
+   -- Auto Invis toggle (Egg)
+   do
+       local autoInvisEggRow = createToggleRow("Auto Invis", eggList, function() return S.eggAutoInvisEnabled end, function()
+           S.eggAutoInvisEnabled = not S.eggAutoInvisEnabled
+           if not S.eggAutoInvisEnabled and S.eggIsFollowing and S._invisEnabled then
+               disableInvis()
+           end
+       end)
+       autoInvisEggRow.LayoutOrder = nextOrder()
+   end
+   -- Auto AutoDupe toggle (Egg)
+   do
+       local autoReorderEggRow = createToggleRow("Auto AutoDupe", eggList, function() return S.eggAutoReorderEnabled end, function()
+           S.eggAutoReorderEnabled = not S.eggAutoReorderEnabled
+       end)
+       autoReorderEggRow.LayoutOrder = nextOrder()
+   end
+   -- AutoDupe Amount slider (Egg)
+   do
+       local reorderEggSliderRow = createSliderRow("AutoDupe Amount", eggList, 1, function(val) S.eggAutoReorderAmount = val end)
+       reorderEggSliderRow.LayoutOrder = nextOrder()
+   end
+   -- Weapons for AutoFarming dropdown (Egg)
+   do
+       local wafEggRow, wafEggIcon, wafEggLabel, wafEggTop, wafEggBot, wafEggDia = createRow("Weapons for AutoFarming")
+       wafEggRow.LayoutOrder = nextOrder()
+       wafEggRow.Parent = eggList
+       applyHoverState(wafEggRow, wafEggIcon, wafEggLabel, wafEggTop, wafEggBot, wafEggDia, false)
+       local wafEggOpenBg = Instance.new("Frame")
+       wafEggOpenBg.Size = UDim2.new(0, 90, 0, 22)
+       wafEggOpenBg.Position = UDim2.new(1, -105, 0.5, -11)
+       wafEggOpenBg.BackgroundColor3 = Color3.fromRGB(35, 35, 35)
+       wafEggOpenBg.BorderSizePixel = 0
+       wafEggOpenBg.Parent = wafEggRow
+       Instance.new("UICorner", wafEggOpenBg).CornerRadius = UDim.new(0, 4)
+       local wafEggOpenLbl = Instance.new("TextLabel")
+       wafEggOpenLbl.Size = UDim2.new(1, 0, 1, 0)
+       wafEggOpenLbl.BackgroundTransparency = 1
+       wafEggOpenLbl.TextColor3 = Color3.new(1, 1, 1)
+       wafEggOpenLbl.Text = "\226\137\161 SELECT"
+       wafEggOpenLbl.Font = Enum.Font.GothamMedium
+       wafEggOpenLbl.TextSize = 11
+       wafEggOpenLbl.TextTruncate = Enum.TextTruncate.AtEnd
+       wafEggOpenLbl.Parent = wafEggOpenBg
+       local _, wafEggDropList, _, showWafEggDrop, hideWafEggDrop = createDraggableDropdown("Egg Weapons")
+       local function updateEggWeaponText()
+           if #S.eggAutoFarmWeapons == 0 then wafEggOpenLbl.Text = "\226\137\161 SELECT"
+           elseif #S.eggAutoFarmWeapons == 1 then wafEggOpenLbl.Text = "\226\137\161 " .. S.eggAutoFarmWeapons[1]
+           else wafEggOpenLbl.Text = "\226\137\161 " .. #S.eggAutoFarmWeapons .. " Selected" end
+       end
+       local function updateEggWeaponDropdown()
+           for _, child in pairs(wafEggDropList:GetChildren()) do
+               if child:IsA("TextButton") then child:Destroy() end
+           end
+           local tools = {}
+           for _, item in pairs(_Players.LocalPlayer.Backpack:GetChildren()) do
+               if item:IsA("Tool") and not table.find(tools, item.Name) then table.insert(tools, item.Name) end
+           end
+           if _Players.LocalPlayer.Character then
+               for _, item in pairs(_Players.LocalPlayer.Character:GetChildren()) do
+                   if item:IsA("Tool") and not table.find(tools, item.Name) then table.insert(tools, item.Name) end
+               end
+           end
+           for _, toolName in pairs(tools) do
+               local item = Instance.new("TextButton")
+               item.Name = toolName
+               item.Parent = wafEggDropList
+               item.BorderSizePixel = 0
+               item.Size = UDim2.new(1, 0, 0, 24)
+               item.Font = Enum.Font.Gotham
+               item.TextColor3 = Color3.new(1, 1, 1)
+               item.TextSize = 12
+               item.TextXAlignment = Enum.TextXAlignment.Left
+               item.AutoButtonColor = false
+               item.ZIndex = 102
+               Instance.new("UICorner", item).CornerRadius = UDim.new(0, 2)
+               _applySoundsToButton(item)
+               local isSelected = table.find(S.eggAutoFarmWeapons, toolName) ~= nil
+               item.BackgroundColor3 = isSelected and Color3.fromRGB(0, 150, 255) or Color3.fromRGB(24, 24, 24)
+               item.Text = isSelected and ("  \226\156\147 " .. toolName) or ("  " .. toolName)
+               item.MouseButton1Click:Connect(function()
+                   _createParticleBurst(item)
+                   local idx = table.find(S.eggAutoFarmWeapons, toolName)
+                   if idx then
+                       table.remove(S.eggAutoFarmWeapons, idx)
+                       item.BackgroundColor3 = Color3.fromRGB(24, 24, 24)
+                       item.Text = "  " .. toolName
+                   else
+                       table.insert(S.eggAutoFarmWeapons, toolName)
+                       item.BackgroundColor3 = Color3.fromRGB(0, 150, 255)
+                       item.Text = "  \226\156\147 " .. toolName
+                   end
+                   updateEggWeaponText()
+               end)
+               item.MouseEnter:Connect(function()
+                   if not table.find(S.eggAutoFarmWeapons, toolName) then item.BackgroundColor3 = Color3.fromRGB(35, 35, 35) end
+               end)
+               item.MouseLeave:Connect(function()
+                   if not table.find(S.eggAutoFarmWeapons, toolName) then item.BackgroundColor3 = Color3.fromRGB(24, 24, 24) end
+               end)
+           end
+       end
+       if _currentRegistryTab then table.insert(_buttonRegistry, {name = "Weapons for AutoFarming (Egg)", tab = _currentRegistryTab, type = "special", onClickFn = function() updateEggWeaponDropdown(); showWafEggDrop() end}) end
+       wafEggRow.MouseButton1Click:Connect(function()
+           _createParticleBurst(wafEggRow)
+           updateEggWeaponDropdown()
+           showWafEggDrop()
+       end)
+   end
+   -- Equip Weapon toggle (Egg)
+   do
+       local eggEquipRow = createToggleRow("Equip Weapon", eggList, function() return S.eggEquipWeaponEnabled end, function()
+           S.eggEquipWeaponEnabled = not S.eggEquipWeaponEnabled
+           if S.eggEquipWeaponEnabled then
+               task.spawn(function()
+                   while S.eggEquipWeaponEnabled do
+                       task.wait(0.1)
+                       if S.eggIsFollowing then
+                           local weapons = S.eggAutoFarmWeapons
+                           local char = _Players.LocalPlayer.Character
+                           local hum = char and char:FindFirstChildOfClass("Humanoid")
+                           if char and hum and hum.Health > 0 and #weapons > 0 then
+                               pcall(function()
+                                   for _, v in pairs(_Players.LocalPlayer.Backpack:GetChildren()) do
+                                       if table.find(weapons, v.Name) then v.Parent = char end
+                                   end
+                               end)
+                           end
+                       end
+                   end
+               end)
+           end
+       end)
+       eggEquipRow.LayoutOrder = nextOrder()
+   end
+   -- Auto Swing toggle (Egg)
+   do
+       local eggSwingRow = createToggleRow("Auto Swing", eggList, function() return S.eggAutoSwingEnabled end, function()
+           S.eggAutoSwingEnabled = not S.eggAutoSwingEnabled
+           if S.eggAutoSwingEnabled then
+               task.spawn(function()
+                   while S.eggAutoSwingEnabled do
+                       task.wait(0.1)
+                       if S.eggIsFollowing and _Players.LocalPlayer.Character then
+                           local weapons = S.eggAutoFarmWeapons
+                           if #weapons > 0 then
+                               for _, v in pairs(_Players.LocalPlayer.Character:GetChildren()) do
+                                   if table.find(weapons, v.Name) then v:Activate() end
+                               end
+                           end
+                       end
+                   end
+               end)
+           end
+       end)
+       eggSwingRow.LayoutOrder = nextOrder()
    end
 
    -- ======= SHARED HELPERS ======= --
@@ -3690,6 +5109,7 @@ do
                            wasFollowing = false
                            S.demonIsFollowing = false
                            spawnNotification("Demon died!")
+                           if S.psWebhookEnabled then _webhookStats.demonsKilled = _webhookStats.demonsKilled + 1 end
                            if S.autoInvisDemonEnabled and S._invisEnabled then disableInvis() end
                            -- Teleport to safe spot after demon dies
                            local c = _Players.LocalPlayer.Character
@@ -3705,6 +5125,7 @@ do
                            wasFollowing = false
                            S.demonIsFollowing = false
                            spawnNotification("Demon died!")
+                           if S.psWebhookEnabled then _webhookStats.demonsKilled = _webhookStats.demonsKilled + 1 end
                            if S.autoInvisDemonEnabled and S._invisEnabled then disableInvis() end
                            -- Teleport to safe spot after demon dies
                            local c = _Players.LocalPlayer.Character
@@ -3853,6 +5274,7 @@ do
                            wasFollowing = false
                            S.generalIsFollowing = false
                            spawnNotification("General died! 35s cooldown...")
+                           if S.psWebhookEnabled then _webhookStats.generalsKilled = _webhookStats.generalsKilled + 1 end
                            S.generalCooldownEnd = tick() + 35
                            if S.autoInvisEnabled and S._invisEnabled then disableInvis() end
                        end
@@ -3862,6 +5284,7 @@ do
                            wasFollowing = false
                            S.generalIsFollowing = false
                            spawnNotification("General died! 35s cooldown...")
+                           if S.psWebhookEnabled then _webhookStats.generalsKilled = _webhookStats.generalsKilled + 1 end
                            S.generalCooldownEnd = tick() + 35
                            if S.autoInvisEnabled and S._invisEnabled then disableInvis() end
                        end
@@ -4056,6 +5479,389 @@ do
            task.wait(0.3)
        end
    end)
+   -- ======= EGG AUTOFARM MAIN LOOP ======= --
+   -- Restructured to match NPC autofarm pattern: persistent hold connection,
+   -- continuous tweening between targets, no re-dupe/invis unless player dies.
+   task.spawn(function()
+       local eggCurrentTarget = nil
+       local eggSetupDone = false
+       local eggHoldConn = nil -- persistent RenderStepped that holds character flat
+       local eggHoldCF = nil -- the CFrame to hold (updated as we move/follow)
+       local eggTweening = false -- true while actively tweening to a target
+       local eggMode = nil -- "egg" or "general"
+       local eggVoteDebounce = false
+       -- Helper: check if we are on the Chocolate Kingdom map
+       local function isChocolateKingdomMap()
+           local config = workspace:FindFirstChild("Configuration")
+           if not config then return false end
+           local mapName = config:FindFirstChild("MapName")
+           if not mapName then return false end
+           return mapName.Value == "Chocolate Kingdom"
+       end
+       -- Helper: vote for Chocolate Kingdom
+       local function voteChocolateKingdom()
+           pcall(function()
+               if _TextChatService.ChatVersion == Enum.ChatVersion.TextChatService then
+                   local channel = _TextChatService.TextChannels:FindFirstChild("RBXGeneral")
+                   if channel then channel:SendAsync(":mapvote chocolate kingdom") end
+               else
+                   local legacyEvents = _ReplicatedStorage:FindFirstChild("DefaultChatSystemChatEvents")
+                   if legacyEvents and legacyEvents:FindFirstChild("SayMessageRequest") then
+                       legacyEvents.SayMessageRequest:FireServer(":mapvote chocolate kingdom", "All")
+                   end
+               end
+           end)
+       end
+       -- Helper: find the closest egg target (eggs + easter NPCs)
+       -- Priority: Eggs (Blue/Pink/Yellow/Green) are preferred targets.
+       -- Non-priority easter NPCs are only picked if they are closer than the closest egg.
+       local function findEggTarget()
+           local char = _Players.LocalPlayer.Character
+           local root = char and char:FindFirstChild("HumanoidRootPart")
+           if not root then return nil, nil end
+           local unbreakable = workspace:FindFirstChild("Unbreakable")
+           if not unbreakable then return nil, nil end
+           -- Track closest priority egg and closest non-priority NPC separately
+           local bestEgg = nil
+           local bestEggPart = nil
+           local bestEggDist = math.huge
+           local bestNpc = nil
+           local bestNpcPart = nil
+           local bestNpcDist = math.huge
+           -- Check priority eggs in Undead folder
+           local undead = unbreakable:FindFirstChild("Undead")
+           if undead then
+               for _, eggName in ipairs({"Blue Egg", "Pink Egg", "Yellow Egg", "Green Egg"}) do
+                   local egg = undead:FindFirstChild(eggName)
+                   if egg and egg:IsA("Model") then
+                       local hum = egg:FindFirstChildOfClass("Humanoid")
+                       if hum and hum.Health > 0 then
+                           local part = egg.PrimaryPart
+                           if not part then
+                               for _, pn in ipairs({"HumanoidRootPart", "Torso", "LowerTorso", "UpperTorso", "Head"}) do
+                                   local f = egg:FindFirstChild(pn)
+                                   if f and f:IsA("BasePart") then part = f break end
+                               end
+                           end
+                           if part then
+                               local dist = (root.Position - part.Position).Magnitude
+                               if dist < bestEggDist then
+                                   bestEggDist = dist
+                                   bestEgg = egg
+                                   bestEggPart = part
+                               end
+                           end
+                       end
+                   end
+               end
+           end
+           -- Check non-priority easter NPCs in Characters folders (Human, Orc, Undead)
+           local chars = unbreakable:FindFirstChild("Characters")
+           if chars then
+               for _, teamName in ipairs({"Human", "Orc", "Undead"}) do
+                   local teamFolder = chars:FindFirstChild(teamName)
+                   if teamFolder then
+                       for _, npcName in ipairs({"Carrot Menace", "Bunny", "Easter Guardian"}) do
+                           local npc = teamFolder:FindFirstChild(npcName)
+                           if npc and npc:IsA("Model") then
+                               local hum = npc:FindFirstChildOfClass("Humanoid")
+                               if hum and hum.Health > 0 then
+                                   local part = npc.PrimaryPart
+                                   if not part then
+                                       for _, pn in ipairs({"HumanoidRootPart", "Torso", "LowerTorso", "UpperTorso", "Head"}) do
+                                           local f = npc:FindFirstChild(pn)
+                                           if f and f:IsA("BasePart") then part = f break end
+                                       end
+                                   end
+                                   if part then
+                                       local dist = (root.Position - part.Position).Magnitude
+                                       if dist < bestNpcDist then
+                                           bestNpcDist = dist
+                                           bestNpc = npc
+                                           bestNpcPart = part
+                                       end
+                                   end
+                               end
+                           end
+                       end
+                   end
+               end
+           end
+           -- Priority logic: prefer eggs, but pick non-priority NPC if it's closer
+           if bestEgg then
+               if bestNpc and bestNpcDist < bestEggDist then
+                   return bestNpc, bestNpcPart
+               end
+               return bestEgg, bestEggPart
+           end
+           -- No eggs alive, fall back to closest NPC
+           return bestNpc, bestNpcPart
+       end
+       -- Helper: find and return the part for the egg target (for follow updates)
+       local function getTargetPart(target)
+           if not target or not target.Parent then return nil end
+           local hum = target:FindFirstChildOfClass("Humanoid")
+           if not hum or hum.Health <= 0 then return nil end
+           local part = target.PrimaryPart
+           if not part then
+               for _, pn in ipairs({"HumanoidRootPart", "Torso", "LowerTorso", "UpperTorso", "Head"}) do
+                   local f = target:FindFirstChild(pn)
+                   if f and f:IsA("BasePart") then part = f break end
+               end
+           end
+           return part
+       end
+       -- Full cleanup: disconnects hold, resets all state
+       local function cleanupEggFarm()
+           if eggHoldConn then eggHoldConn:Disconnect() eggHoldConn = nil end
+           eggHoldCF = nil
+           eggTweening = false
+           S.eggIsFollowing = false
+           eggCurrentTarget = nil
+           eggMode = nil
+       end
+       -- Shared setup: runs dupe + invis once, then returns
+       local function doEggSetup()
+           task.wait(1) -- wait for character to fully load
+           local dupeFinished = true
+           local invisFinished = true
+           if S.eggAutoReorderEnabled and S.eggAutofarmEnabled then
+               dupeFinished = false
+               task.spawn(function()
+                   spawnNotification("AutoDuping weapons...")
+                   performReorder(S.eggAutoReorderAmount, function() return S.eggAutofarmEnabled end)
+                   task.wait(1.5)
+                   dupeFinished = true
+               end)
+           end
+           if S.eggAutoInvisEnabled and S.eggAutofarmEnabled then
+               invisFinished = false
+               task.spawn(function()
+                   if S._invisThread and not S._invisEnabled then
+                       local clearWait = tick()
+                       while S._invisThread and tick() - clearWait < 5 do
+                           task.wait(0.2)
+                       end
+                   end
+                   if not S._invisEnabled then
+                       spawnNotification("Enabling Invis, please wait...")
+                       enableInvis()
+                   end
+                   local invisWaitStart = tick()
+                   while (not S._invisThread or not S._invisEnabled) and S.eggAutofarmEnabled and tick() - invisWaitStart < 30 do
+                       task.wait(0.2)
+                   end
+                   if S._invisThread and S._invisEnabled then task.wait(1) end
+                   invisFinished = true
+               end)
+           end
+           while S.eggAutofarmEnabled and (not dupeFinished or not invisFinished) do
+               task.wait(0.2)
+           end
+       end
+       -- Single persistent RenderStepped connection (like NPC autofarm)
+       -- Holds character at eggHoldCF, auto-follows current target when not tweening
+       local function ensureEggHoldConnection()
+           if eggHoldConn then return end
+           eggHoldConn = _RunService.RenderStepped:Connect(function()
+               if not S.eggAutofarmEnabled or not eggHoldCF then return end
+               local c = _Players.LocalPlayer.Character
+               local r = c and c:FindFirstChild("HumanoidRootPart")
+               if not r then return end
+               -- When not tweening, auto-follow the current target
+               if eggCurrentTarget and not eggTweening then
+                   if eggMode == "egg" then
+                       local tp = getTargetPart(eggCurrentTarget)
+                       if tp then
+                           eggHoldCF = CFrame.new(tp.Position - Vector3.new(0, 4.5, 0)) * CFrame.Angles(math.pi / 2, 0, 0)
+                       end
+                   elseif eggMode == "general" then
+                       local _, tp = findOppositeGeneral()
+                       if tp and tp.Parent then
+                           eggHoldCF = CFrame.new(tp.Position - Vector3.new(0, 4.5, 0)) * CFrame.Angles(math.pi / 2, 0, 0)
+                       end
+                   end
+               end
+               -- Always hold character at eggHoldCF
+               r.CFrame = eggHoldCF
+               breakVelocity(r)
+           end)
+       end
+       while true do
+           if S.eggAutofarmEnabled then
+               -- Require Human or Orc team before doing anything
+               local playerTeam = _Players.LocalPlayer.Team
+               local teamName = playerTeam and playerTeam.Name:lower() or ""
+               if not (teamName:find("human") or teamName:find("orc")) then
+                   cleanupEggFarm()
+                   eggSetupDone = false
+                   task.wait(0.3)
+                   continue
+               end
+               local char = _Players.LocalPlayer.Character
+               local root = char and char:FindFirstChild("HumanoidRootPart")
+               local hum = char and char:FindFirstChildOfClass("Humanoid")
+               if root and hum and hum.Health > 0 then
+                   if isChocolateKingdomMap() then
+                       -- ON Chocolate Kingdom: target eggs and easter NPCs
+                       eggVoteDebounce = false
+                       -- If we were in general mode, switch to egg mode (keep setup!)
+                       if eggMode == "general" then
+                           eggCurrentTarget = nil
+                           eggTweening = false
+                           eggMode = nil
+                           -- Keep eggSetupDone, keep eggHoldConn, keep eggHoldCF
+                       end
+                       -- Check if current target died — just clear target, hold connection keeps us floating
+                       if eggCurrentTarget and (not eggCurrentTarget.Parent or not isTargetAlive(eggCurrentTarget)) then
+                           spawnNotification("Egg target killed!")
+                           eggCurrentTarget = nil
+                           eggTweening = false
+                           -- eggHoldCF stays as-is so character stays where they are
+                           -- eggSetupDone stays true — no re-dupe/invis
+                       end
+                       -- Find closest egg target if we don't have one
+                       if not eggCurrentTarget then
+                           local target, targetPart = findEggTarget()
+                           if target and targetPart then
+                               eggCurrentTarget = target
+                               eggMode = "egg"
+                               S.eggIsFollowing = true
+                               spawnNotification("Egg target found! Attacking...")
+                               -- One-time setup: dupe + invis (only after enable/death)
+                               if not eggSetupDone then
+                                   spawnNotification("Egg farm starting! Preparing...")
+                                   doEggSetup()
+                                   eggSetupDone = true
+                                   -- Re-read root position after setup
+                                   local freshChar = _Players.LocalPlayer.Character
+                                   local freshRoot = freshChar and freshChar:FindFirstChild("HumanoidRootPart")
+                                   if freshRoot then
+                                       eggHoldCF = CFrame.new(freshRoot.Position) * CFrame.Angles(math.pi / 2, 0, 0)
+                                   else
+                                       eggHoldCF = CFrame.new(root.Position) * CFrame.Angles(math.pi / 2, 0, 0)
+                                   end
+                               end
+                               ensureEggHoldConnection()
+                               -- Move to target (tween or teleport)
+                               if S.eggAutofarmEnabled and targetPart and targetPart.Parent then
+                                   local targetPos = targetPart.Position - Vector3.new(0, 4.5, 0)
+                                   if S.eggFarmMethod == "Tween" then
+                                       local startCF = eggHoldCF or CFrame.new(root.Position)
+                                       local startPos = startCF.Position
+                                       local dist = (startPos - targetPos).Magnitude
+                                       local tweenTime = math.clamp(dist / S.eggTweenSpeed, 0.3, 6)
+                                       eggTweening = true
+                                       local elapsed = 0
+                                       while elapsed < tweenTime and S.eggAutofarmEnabled and eggCurrentTarget and eggCurrentTarget.Parent do
+                                           elapsed = elapsed + task.wait()
+                                           local alpha = math.min(elapsed / tweenTime, 1)
+                                           local freshPart = getTargetPart(eggCurrentTarget)
+                                           if freshPart then
+                                               targetPos = freshPart.Position - Vector3.new(0, 4.5, 0)
+                                           end
+                                           local tweenedPos = startPos:Lerp(targetPos, alpha)
+                                           eggHoldCF = CFrame.new(tweenedPos) * CFrame.Angles(math.pi / 2, 0, 0)
+                                       end
+                                       eggTweening = false
+                                   else
+                                       eggHoldCF = CFrame.new(targetPos) * CFrame.Angles(math.pi / 2, 0, 0)
+                                   end
+                               end
+                               -- Hold connection now auto-follows the egg target
+                           end
+                       end
+                   else
+                       -- NOT on Chocolate Kingdom: kill opposite general + vote for CK
+                       -- If we were in egg mode, switch to general mode (keep setup!)
+                       if eggMode == "egg" then
+                           eggCurrentTarget = nil
+                           eggTweening = false
+                           eggMode = nil
+                           -- Keep eggSetupDone, keep eggHoldConn, keep eggHoldCF
+                       end
+                       -- Check if general target died — just clear target
+                       if eggCurrentTarget and not isTargetAlive(eggCurrentTarget) then
+                           spawnNotification("General killed! Voting for Chocolate Kingdom...")
+                           eggCurrentTarget = nil
+                           eggTweening = false
+                           -- eggSetupDone stays true — no re-dupe/invis
+                           voteChocolateKingdom()
+                           eggVoteDebounce = true
+                       end
+                       -- Find general if we don't have a target
+                       if not eggCurrentTarget then
+                           local targetGeneral, targetPart = findOppositeGeneral()
+                           if targetGeneral and targetPart and isTargetAlive(targetGeneral) then
+                               eggCurrentTarget = targetGeneral
+                               eggMode = "general"
+                               S.eggIsFollowing = true
+                               spawnNotification("Not on Chocolate Kingdom! Killing general...")
+                               -- One-time setup (only after enable/death)
+                               if not eggSetupDone then
+                                   spawnNotification("Egg farm starting! Preparing...")
+                                   doEggSetup()
+                                   eggSetupDone = true
+                                   local freshChar = _Players.LocalPlayer.Character
+                                   local freshRoot = freshChar and freshChar:FindFirstChild("HumanoidRootPart")
+                                   if freshRoot then
+                                       eggHoldCF = CFrame.new(freshRoot.Position) * CFrame.Angles(math.pi / 2, 0, 0)
+                                   else
+                                       eggHoldCF = CFrame.new(root.Position) * CFrame.Angles(math.pi / 2, 0, 0)
+                                   end
+                               end
+                               ensureEggHoldConnection()
+                               -- Move to general
+                               if S.eggAutofarmEnabled and targetPart and targetPart.Parent then
+                                   local targetPos = targetPart.Position - Vector3.new(0, 4.5, 0)
+                                   if S.eggFarmMethod == "Tween" then
+                                       local startCF = eggHoldCF or CFrame.new(root.Position)
+                                       local startPos = startCF.Position
+                                       local dist = (startPos - targetPos).Magnitude
+                                       local tweenTime = math.clamp(dist / S.eggTweenSpeed, 0.3, 6)
+                                       eggTweening = true
+                                       local elapsed = 0
+                                       while elapsed < tweenTime and S.eggAutofarmEnabled and isTargetAlive(eggCurrentTarget) do
+                                           elapsed = elapsed + task.wait()
+                                           local alpha = math.min(elapsed / tweenTime, 1)
+                                           local _, freshTp = findOppositeGeneral()
+                                           if freshTp and freshTp.Parent then
+                                               targetPos = freshTp.Position - Vector3.new(0, 4.5, 0)
+                                           end
+                                           local tweenedPos = startPos:Lerp(targetPos, alpha)
+                                           eggHoldCF = CFrame.new(tweenedPos) * CFrame.Angles(math.pi / 2, 0, 0)
+                                       end
+                                       eggTweening = false
+                                   else
+                                       eggHoldCF = CFrame.new(targetPos) * CFrame.Angles(math.pi / 2, 0, 0)
+                                   end
+                               end
+                               -- Hold connection now auto-follows the general
+                           else
+                               -- No general found or already dead — vote for CK
+                               if not eggVoteDebounce then
+                                   voteChocolateKingdom()
+                                   eggVoteDebounce = true
+                               end
+                           end
+                       end
+                   end
+               else
+                   -- Player died: fully reset everything so dupe+invis re-runs on respawn
+                   if eggSetupDone or eggCurrentTarget or eggHoldCF then
+                       cleanupEggFarm()
+                       eggSetupDone = false
+                       eggTweening = false
+                       if S.eggAutoInvisEnabled and S._invisEnabled then disableInvis() end
+                   end
+               end
+           else
+               cleanupEggFarm()
+               eggSetupDone = false
+           end
+           task.wait(0.3)
+       end
+   end)
    -- ======= TELEPORT FARM LOOP ======= --
    task.spawn(function()
        while true do
@@ -4074,9 +5880,12 @@ do
        end
    end)
    -- ======= TWEEN FARM LOOP ======= --
+   -- Enables noclip while tweening to gems, disables + teleports to demon safe spot when done
    task.spawn(function()
        local activeTween = nil
        local lastGemTarget = nil
+       local tweenNoclipActive = false -- tracks if WE enabled noclip for tween farming
+       local _DEMON_SAFE_SPOT = CFrame.new(-2044.74548, 499.961731, -1937.68774)
        while true do
            if S.tweenFarmEnabled and not S.demonIsFollowing and not S.generalIsFollowing and not S.npcIsFollowing then
                local char = _Players.LocalPlayer.Character
@@ -4085,6 +5894,11 @@ do
                if root and hum and hum.Health > 0 then
                    local bestGem = getBestGem()
                    if bestGem then
+                       -- Enable noclip when we start collecting gems
+                       if not tweenNoclipActive then
+                           enableNoclip()
+                           tweenNoclipActive = true
+                       end
                        -- Constantly update position to follow the gem (e.g. falling from sky)
                        local gemPos = bestGem.CFrame + Vector3.new(0, 2, 0)
                        local dist = (root.Position - gemPos.Position).Magnitude
@@ -4102,87 +5916,236 @@ do
                        end
                        lastGemTarget = bestGem
                    else
+                       -- No gems left: disable noclip and teleport to demon safe spot
                        if activeTween then activeTween:Cancel() activeTween = nil end
                        lastGemTarget = nil
+                       if tweenNoclipActive then
+                           disableNoclip()
+                           tweenNoclipActive = false
+                           if root then
+                               root.CFrame = _DEMON_SAFE_SPOT
+                               breakVelocity(root)
+                           end
+                       end
                    end
                end
            else
                if activeTween then activeTween:Cancel() activeTween = nil end
                lastGemTarget = nil
+               if tweenNoclipActive then
+                   disableNoclip()
+                   tweenNoclipActive = false
+               end
            end
            task.wait(0.1)
        end
    end)
-   -- ======= SMART BOT LOOP (improved) ======= --
+   -- ======= SMART BOT LOOP (reworked) ======= --
+   -- Uses pathfinding with robust fallbacks: direct walk, short teleport hops, and
+   -- CFrame-based movement when stuck. Re-paths frequently to track moving gems.
    task.spawn(function()
+       local _DEMON_SAFE_SPOT_BOT = CFrame.new(-2044.74548, 499.961731, -1937.68774)
+       local botConsecutiveFails = 0
        while true do
            if S.gemBotEnabled and not S.demonIsFollowing and not S.generalIsFollowing and not S.npcIsFollowing then
                local char = _Players.LocalPlayer.Character
                local root = char and char:FindFirstChild("HumanoidRootPart")
-               local hum = char and char:FindFirstChild("Humanoid")
+               local hum = char and char:FindFirstChildOfClass("Humanoid")
                if root and hum and hum.Health > 0 then
                    local currentTarget, isUnknown = getBestGem()
                    if currentTarget then
-                       local path = _PathfindingService:CreatePath({
-                           AgentRadius = 2, AgentHeight = 5,
-                           AgentCanJump = true, AgentCanClimb = true,
-                           WaypointSpacing = 4,
-                       })
-                       local success = pcall(function() path:ComputeAsync(root.Position, currentTarget.Position) end)
-                       if success and path.Status == Enum.PathStatus.Success then
-                           local waypoints = path:GetWaypoints()
-                           drawPath(waypoints, isUnknown)
-                           local stuckCount = 0
-                           for i, waypoint in ipairs(waypoints) do
-                               if not S.gemBotEnabled or not currentTarget or currentTarget.Parent == nil or currentTarget.Transparency == 1 then break end
-                               local freshTarget, freshIsUnknown = getBestGem()
-                               if isUnknown and freshTarget and not freshIsUnknown then break end
-                               if waypoint.Action == Enum.PathWaypointAction.Jump then hum.Jump = true task.wait(0.1) end
-                               if i < #waypoints then
-                                   local heightDiff = waypoints[i+1].Position.Y - root.Position.Y
-                                   if heightDiff > 2 then hum.Jump = true task.wait(0.05) end
-                               end
-                               if currentTarget and currentTarget.Parent then
-                                   local gemHeight = currentTarget.Position.Y - root.Position.Y
-                                   if gemHeight > 3 and (root.Position - currentTarget.Position).Magnitude < 15 then hum.Jump = true end
-                               end
-                               hum:MoveTo(waypoint.Position)
-                               local timeStarted = tick()
-                               local lastDist = (root.Position - waypoint.Position).Magnitude
-                               local lastPos = root.Position
-                               while S.gemBotEnabled and tick() - timeStarted < 2 do
-                                   task.wait(0.05)
-                                   local d = (root.Position - waypoint.Position).Magnitude
-                                   if d < 3 then break end
-                                   local movedDist = (root.Position - lastPos).Magnitude
-                                   if tick() - timeStarted > 0.3 and movedDist < 0.5 then
-                                       hum.Jump = true
-                                       stuckCount = stuckCount + 1
-                                       if stuckCount > 5 then break end
-                                   else
-                                       stuckCount = 0
-                                   end
-                                   if d > lastDist + 3 then break end
-                                   lastDist = d
-                                   lastPos = root.Position
-                               end
-                               if (root.Position - waypoint.Position).Magnitude > 5 then break end
-                           end
+                       botConsecutiveFails = 0
+                       local targetPos = currentTarget.Position
+                       local dist = (root.Position - targetPos).Magnitude
+                       -- Strategy 1: If very close, just walk directly
+                       if dist < 8 then
+                           hum:MoveTo(targetPos)
+                           if targetPos.Y - root.Position.Y > 2 then hum.Jump = true end
+                           task.wait(0.3)
                        else
-                           if currentTarget and currentTarget.Parent then
-                               local directDist = (root.Position - currentTarget.Position).Magnitude
-                               if directDist < 30 then
-                                   hum:MoveTo(currentTarget.Position)
-                                   if currentTarget.Position.Y - root.Position.Y > 2 then hum.Jump = true end
-                                   task.wait(0.5)
+                           -- Strategy 2: Try pathfinding first
+                           local path = _PathfindingService:CreatePath({
+                               AgentRadius = 2, AgentHeight = 5,
+                               AgentCanJump = true, AgentCanClimb = true,
+                               WaypointSpacing = 6,
+                           })
+                           local pathSuccess = pcall(function() path:ComputeAsync(root.Position, targetPos) end)
+                           if pathSuccess and path.Status == Enum.PathStatus.Success then
+                               local waypoints = path:GetWaypoints()
+                               drawPath(waypoints, isUnknown)
+                               local stuckTotal = 0
+                               for i, waypoint in ipairs(waypoints) do
+                                   -- Bail conditions
+                                   if not S.gemBotEnabled then break end
+                                   if not currentTarget or currentTarget.Parent == nil or currentTarget.Transparency == 1 then break end
+                                   -- Re-check if a better (known) gem appeared
+                                   local freshTarget, freshIsUnknown = getBestGem()
+                                   if freshTarget ~= currentTarget then
+                                       -- A closer gem appeared, break and re-target next loop
+                                       if not isUnknown or (freshTarget and not freshIsUnknown) then break end
+                                   end
+                                   -- Pre-jump for height changes
+                                   if waypoint.Action == Enum.PathWaypointAction.Jump then hum.Jump = true task.wait(0.05) end
+                                   if i < #waypoints then
+                                       local heightDiff = waypoints[i+1].Position.Y - root.Position.Y
+                                       if heightDiff > 1.5 then hum.Jump = true task.wait(0.05) end
+                                   end
+                                   -- Move to waypoint
+                                   hum:MoveTo(waypoint.Position)
+                                   local timeStarted = tick()
+                                   local lastPos = root.Position
+                                   local waypointReached = false
+                                   while S.gemBotEnabled and tick() - timeStarted < 1.5 do
+                                       task.wait(0.05)
+                                       local d = (root.Position - waypoint.Position).Magnitude
+                                       if d < 4 then waypointReached = true break end
+                                       local movedDist = (root.Position - lastPos).Magnitude
+                                       if tick() - timeStarted > 0.4 and movedDist < 0.3 then
+                                           -- Stuck: try jumping first
+                                           hum.Jump = true
+                                           stuckTotal = stuckTotal + 1
+                                           if stuckTotal > 3 then
+                                               -- Really stuck: short teleport hop toward waypoint
+                                               local dir = (waypoint.Position - root.Position).Unit
+                                               root.CFrame = CFrame.new(root.Position + dir * math.min(d, 10))
+                                               stuckTotal = 0
+                                               break
+                                           end
+                                       end
+                                       lastPos = root.Position
+                                   end
+                                   if not waypointReached and (root.Position - waypoint.Position).Magnitude > 8 then break end
+                               end
+                           else
+                               -- Strategy 3: Pathfinding failed — walk directly or hop
+                               if currentTarget and currentTarget.Parent then
+                                   if dist < 50 then
+                                       -- Try direct walk with jumping
+                                       hum:MoveTo(targetPos)
+                                       if targetPos.Y - root.Position.Y > 1.5 then hum.Jump = true end
+                                       local walkStart = tick()
+                                       local walkStartPos = root.Position
+                                       while S.gemBotEnabled and tick() - walkStart < 2 do
+                                           task.wait(0.1)
+                                           local moved = (root.Position - walkStartPos).Magnitude
+                                           local remaining = (root.Position - targetPos).Magnitude
+                                           if remaining < 4 then break end
+                                           if tick() - walkStart > 0.5 and moved < 1 then
+                                               -- Stuck: teleport hop toward gem
+                                               local dir = (targetPos - root.Position).Unit
+                                               root.CFrame = CFrame.new(root.Position + dir * math.min(remaining, 15))
+                                               break
+                                           end
+                                       end
+                                   else
+                                       -- Too far for walking, teleport closer in hops
+                                       local dir = (targetPos - root.Position).Unit
+                                       root.CFrame = CFrame.new(root.Position + dir * 30)
+                                       task.wait(0.2)
+                                   end
                                end
                            end
+                       end
+                   else
+                       -- No gems available: teleport to demon safe spot
+                       botConsecutiveFails = botConsecutiveFails + 1
+                       if botConsecutiveFails > 3 then
+                           if root then
+                               root.CFrame = _DEMON_SAFE_SPOT_BOT
+                               breakVelocity(root)
+                           end
+                           botConsecutiveFails = 0
                        end
                    end
                end
            end
            pathVisualsFolder:ClearAllChildren()
-           task.wait(0.1)
+           task.wait(0.15)
+       end
+   end)
+   -- ======= DISCORD WEBHOOK GEM COLLECTION MONITOR ======= --
+   -- Excluded gem IDs that should NOT trigger a webhook message even if targeted:
+   local _webhookExcludedGemIds = {[1] = true, [51] = true, [39] = true} -- Red Diamond, Legendary Shard, Ice Gem
+   task.spawn(function()
+       local previousGems = {} -- {gemPart = gemId}
+       while true do
+           if S.psWebhookEnabled and S.psWebhookUrl ~= "" and _webhookValidated then
+               local root = _Players.LocalPlayer.Character and _Players.LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+               if root then
+                   -- Build current gem snapshot from cache
+                   local currentGems = {}
+                   local gems = refreshGemCache()
+                   for _, gemData in ipairs(gems) do
+                       if gemData.part and gemData.part.Parent and gemData.part.Transparency < 1 then
+                           currentGems[gemData.part] = gemData.id
+                       end
+                   end
+                   -- Check which gems from previous snapshot are now gone (collected)
+                   for gemPart, gemId in pairs(previousGems) do
+                       if not currentGems[gemPart] then
+                           -- This gem disappeared - check if player was close enough to have collected it
+                           local wasNear = true -- assume collected since we were farming
+                           local gemName = gemValues[gemId]
+                           if gemName then
+                               -- It's a known/targeted gem
+                               if selectedGems[gemId] then
+                                   _webhookStats.targetedGems[gemName] = (_webhookStats.targetedGems[gemName] or 0) + 1
+                                   -- Check if this targeted gem should trigger a webhook send
+                                   if not _webhookExcludedGemIds[gemId] then
+                                       -- Send webhook message with all tracked stats
+                                       local player = _Players.LocalPlayer
+                                       local leaderstats = player and player:FindFirstChild("leaderstats")
+                                       local goldVal = leaderstats and leaderstats:FindFirstChild("Gold")
+                                       local xpVal = leaderstats and leaderstats:FindFirstChild("XP")
+                                       local goldEarned = (goldVal and goldVal.Value or 0) - _webhookStats.goldStart
+                                       local xpEarned = (xpVal and xpVal.Value or 0) - _webhookStats.xpStart
+                                       -- Build targeted gems summary
+                                       local gemLines = {}
+                                       for gName, gCount in pairs(_webhookStats.targetedGems) do
+                                           table.insert(gemLines, gName .. ": " .. gCount)
+                                       end
+                                       local gemSummary = #gemLines > 0 and table.concat(gemLines, ", ") or "None"
+                                       -- Build the embed
+                                       local embedFields = {
+                                           {name = "Gold Earned", value = tostring(goldEarned), inline = true},
+                                           {name = "XP Earned", value = tostring(xpEarned), inline = true},
+                                           {name = "Generals Killed", value = tostring(_webhookStats.generalsKilled), inline = true},
+                                           {name = "Demons Killed", value = tostring(_webhookStats.demonsKilled), inline = true},
+                                           {name = "Unknown Gems Picked Up", value = tostring(_webhookStats.unknownGemsPickedUp), inline = true},
+                                           {name = "Targeted Gems Picked Up", value = gemSummary, inline = false},
+                                       }
+                                       local payload = {
+                                           embeds = {{
+                                               title = "FOB Autofarm Stats",
+                                               description = "Triggered by picking up: **" .. gemName .. "**",
+                                               color = 3066993, -- green
+                                               fields = embedFields,
+                                               footer = {text = "Player: " .. player.Name},
+                                               timestamp = os.date("!%Y-%m-%dT%H:%M:%SZ"),
+                                           }}
+                                       }
+                                       task.spawn(function()
+                                           sendDiscordWebhook(S.psWebhookUrl, payload)
+                                       end)
+                                       -- Reset stats after sending
+                                       resetWebhookStats()
+                                   end
+                               else
+                                   -- Known gem but not selected as target = unknown pickup
+                                   _webhookStats.unknownGemsPickedUp = _webhookStats.unknownGemsPickedUp + 1
+                               end
+                           else
+                               -- Truly unknown gem (not in gemValues table)
+                               _webhookStats.unknownGemsPickedUp = _webhookStats.unknownGemsPickedUp + 1
+                           end
+                       end
+                   end
+                   previousGems = currentGems
+               end
+           else
+               previousGems = {}
+           end
+           task.wait(0.5)
        end
    end)
 end
@@ -4647,54 +6610,102 @@ do
    end
    local function getAllStateValues()
        return {
+           -- Player settings
            equipWeaponEnabled = S.equipWeaponEnabled,
            farmWeaponEnabled = S.farmWeaponEnabled,
            noclipEnabled = S.noclipEnabled,
            tpWalkEnabled = S.tpWalkEnabled,
            infJumpEnabled = S.infJumpEnabled,
            antiAfkEnabled = S.antiAfkEnabled,
+           selectedWeapons = S.selectedWeapons,
+           weaponReorderAmount = S.weaponReorderAmount,
+           -- Visuals / misc
            gemEspEnabled = S.gemEspEnabled,
            humanGeneralEspEnabled = S.humanGeneralEspEnabled,
            orcGeneralEspEnabled = S.orcGeneralEspEnabled,
+           playerEspEnabled = S.playerEspEnabled,
            autoVoteEnabled = S.autoVoteEnabled,
+           selectedMap = S.selectedMap,
            staffNotifyEnabled = S.staffNotifyEnabled,
            staffKickEnabled = S.staffKickEnabled,
-            gemFarmEnabled = S.gemFarmEnabled,
+           notificationsEnabled = S.notificationsEnabled,
+           guiTransparency = S.guiTransparency,
+           dupeCooldown = S.dupeCooldown,
+           -- Gem autofarm
+           gemFarmEnabled = S.gemFarmEnabled,
            gemBotEnabled = S.gemBotEnabled,
            tweenFarmEnabled = S.tweenFarmEnabled,
            gemAutofarmEnabled = S.gemAutofarmEnabled,
            gemFarmMethod = S.gemFarmMethod,
            gemTweenSpeed = S.gemTweenSpeed,
-           dupeCooldown = S.dupeCooldown,
+           gemTargetUnknowns = S.gemTargetUnknowns,
+           -- General autofarm
            autofarmGeneralEnabled = S.autofarmGeneralEnabled,
            autoInvisEnabled = S.autoInvisEnabled,
            autoReorderEnabled = S.autoReorderEnabled,
+           autoReorderAmount = S.autoReorderAmount,
            generalFarmMethod = S.generalFarmMethod,
            generalTweenSpeed = S.generalTweenSpeed,
            generalEquipWeaponEnabled = S.generalEquipWeaponEnabled,
            generalAutoSwingEnabled = S.generalAutoSwingEnabled,
+           generalAutoFarmWeapons = S.generalAutoFarmWeapons,
+           -- Demon autofarm
            autofarmDemonEnabled = S.autofarmDemonEnabled,
            autoInvisDemonEnabled = S.autoInvisDemonEnabled,
            autoReorderDemonEnabled = S.autoReorderDemonEnabled,
+           autoReorderDemonAmount = S.autoReorderDemonAmount,
            demonFarmMethod = S.demonFarmMethod,
            demonTweenSpeed = S.demonTweenSpeed,
            demonEquipWeaponEnabled = S.demonEquipWeaponEnabled,
            demonAutoSwingEnabled = S.demonAutoSwingEnabled,
+           demonAutoFarmWeapons = S.demonAutoFarmWeapons,
+           -- NPC autofarm
            autofarmNpcEnabled = S.autofarmNpcEnabled,
            autoInvisNpcEnabled = S.autoInvisNpcEnabled,
            autoReorderNpcEnabled = S.autoReorderNpcEnabled,
+           autoReorderNpcAmount = S.autoReorderNpcAmount,
            npcFarmMethod = S.npcFarmMethod,
            npcTweenSpeed = S.npcTweenSpeed,
            npcEquipWeaponEnabled = S.npcEquipWeaponEnabled,
            npcAutoSwingEnabled = S.npcAutoSwingEnabled,
-           notificationsEnabled = S.notificationsEnabled,
-           guiTransparency = S.guiTransparency,
+           npcAutoFarmWeapons = S.npcAutoFarmWeapons,
+           -- Egg autofarm
+           eggAutofarmEnabled = S.eggAutofarmEnabled,
+           eggFarmMethod = S.eggFarmMethod,
+           eggTweenSpeed = S.eggTweenSpeed,
+           eggAutoInvisEnabled = S.eggAutoInvisEnabled,
+           eggAutoReorderEnabled = S.eggAutoReorderEnabled,
+           eggAutoReorderAmount = S.eggAutoReorderAmount,
+           eggEquipWeaponEnabled = S.eggEquipWeaponEnabled,
+           eggAutoSwingEnabled = S.eggAutoSwingEnabled,
+           eggAutoFarmWeapons = S.eggAutoFarmWeapons,
+           -- PS autofarm
+           psFarmMethod = S.psFarmMethod,
+           psFarmTweenSpeed = S.psFarmTweenSpeed,
+           psFastModeEnabled = S.psFastModeEnabled,
+           psAutoInvisEnabled = S.psAutoInvisEnabled,
+           psAutoReorderEnabled = S.psAutoReorderEnabled,
+           psAutoReorderAmount = S.psAutoReorderAmount,
+           psAutoFarmWeapons = S.psAutoFarmWeapons,
+           psWebhookEnabled = S.psWebhookEnabled,
+           psWebhookUrl = S.psWebhookUrl,
+           -- Misc
+           autoEternalFireEnabled = S.autoEternalFireEnabled,
        }
    end
    local function serializeConfig(tbl)
        local parts = {}
        for k, v in pairs(tbl) do
-           table.insert(parts, k .. "=" .. tostring(v))
+           if type(v) == "table" then
+               -- Serialize arrays as comma-separated strings with TABLE: prefix
+               local items = {}
+               for _, item in ipairs(v) do
+                   table.insert(items, tostring(item))
+               end
+               table.insert(parts, k .. "=TABLE:" .. table.concat(items, ","))
+           else
+               table.insert(parts, k .. "=" .. tostring(v))
+           end
        end
        return table.concat(parts, "\n")
    end
@@ -4703,7 +6714,17 @@ do
        for line in str:gmatch("[^\n]+") do
            local k, v = line:match("^(.-)=(.+)$")
            if k and v then
-               if v == "true" then tbl[k] = true
+               if v:sub(1, 6) == "TABLE:" then
+                   -- Deserialize TABLE: prefix back into an array
+                   local items = {}
+                   local content = v:sub(7)
+                   if content ~= "" then
+                       for item in content:gmatch("[^,]+") do
+                           table.insert(items, item)
+                       end
+                   end
+                   tbl[k] = items
+               elseif v == "true" then tbl[k] = true
                elseif v == "false" then tbl[k] = false
                else tbl[k] = tonumber(v) or v end
            end
@@ -4731,6 +6752,75 @@ do
            if cfg.notificationsEnabled ~= nil then S.notificationsEnabled = cfg.notificationsEnabled end
            if cfg.staffNotifyEnabled ~= nil then S.staffNotifyEnabled = cfg.staffNotifyEnabled end
            if cfg.staffKickEnabled ~= nil then S.staffKickEnabled = cfg.staffKickEnabled end
+           if cfg.psWebhookUrl ~= nil then S.psWebhookUrl = tostring(cfg.psWebhookUrl) end
+           -- PS autofarm
+           if cfg.psFarmMethod ~= nil then S.psFarmMethod = tostring(cfg.psFarmMethod) end
+           if cfg.psFarmTweenSpeed ~= nil then S.psFarmTweenSpeed = cfg.psFarmTweenSpeed end
+           if cfg.psFastModeEnabled ~= nil then S.psFastModeEnabled = cfg.psFastModeEnabled end
+           if cfg.psAutoInvisEnabled ~= nil then S.psAutoInvisEnabled = cfg.psAutoInvisEnabled end
+           if cfg.psAutoReorderEnabled ~= nil then S.psAutoReorderEnabled = cfg.psAutoReorderEnabled end
+           if cfg.psAutoReorderAmount ~= nil then S.psAutoReorderAmount = cfg.psAutoReorderAmount end
+           if cfg.psAutoFarmWeapons ~= nil and type(cfg.psAutoFarmWeapons) == "table" then S.psAutoFarmWeapons = cfg.psAutoFarmWeapons end
+           if cfg.psWebhookEnabled ~= nil then S.psWebhookEnabled = cfg.psWebhookEnabled end
+           if cfg.psWebhookUrl ~= nil then S.psWebhookUrl = tostring(cfg.psWebhookUrl) end
+           -- Player settings
+           if cfg.noclipEnabled ~= nil then S.noclipEnabled = cfg.noclipEnabled end
+           if cfg.tpWalkEnabled ~= nil then S.tpWalkEnabled = cfg.tpWalkEnabled end
+           if cfg.infJumpEnabled ~= nil then S.infJumpEnabled = cfg.infJumpEnabled end
+           if cfg.antiAfkEnabled ~= nil then S.antiAfkEnabled = cfg.antiAfkEnabled end
+           if cfg.equipWeaponEnabled ~= nil then S.equipWeaponEnabled = cfg.equipWeaponEnabled end
+           if cfg.farmWeaponEnabled ~= nil then S.farmWeaponEnabled = cfg.farmWeaponEnabled end
+           if cfg.selectedWeapons ~= nil and type(cfg.selectedWeapons) == "table" then S.selectedWeapons = cfg.selectedWeapons end
+           if cfg.weaponReorderAmount ~= nil then S.weaponReorderAmount = cfg.weaponReorderAmount end
+           -- Visuals / misc
+           if cfg.gemEspEnabled ~= nil then S.gemEspEnabled = cfg.gemEspEnabled end
+           if cfg.humanGeneralEspEnabled ~= nil then S.humanGeneralEspEnabled = cfg.humanGeneralEspEnabled end
+           if cfg.orcGeneralEspEnabled ~= nil then S.orcGeneralEspEnabled = cfg.orcGeneralEspEnabled end
+           if cfg.playerEspEnabled ~= nil then S.playerEspEnabled = cfg.playerEspEnabled end
+           if cfg.autoVoteEnabled ~= nil then S.autoVoteEnabled = cfg.autoVoteEnabled end
+           if cfg.selectedMap ~= nil then S.selectedMap = tostring(cfg.selectedMap) end
+           if cfg.dupeCooldown ~= nil then S.dupeCooldown = cfg.dupeCooldown end
+           if cfg.autoEternalFireEnabled ~= nil then S.autoEternalFireEnabled = cfg.autoEternalFireEnabled end
+           -- Gem autofarm
+           if cfg.gemFarmMethod ~= nil then S.gemFarmMethod = tostring(cfg.gemFarmMethod) end
+           if cfg.gemTweenSpeed ~= nil then S.gemTweenSpeed = cfg.gemTweenSpeed end
+           if cfg.gemTargetUnknowns ~= nil then S.gemTargetUnknowns = cfg.gemTargetUnknowns end
+           -- General autofarm
+           if cfg.generalFarmMethod ~= nil then S.generalFarmMethod = tostring(cfg.generalFarmMethod) end
+           if cfg.generalTweenSpeed ~= nil then S.generalTweenSpeed = cfg.generalTweenSpeed end
+           if cfg.autoInvisEnabled ~= nil then S.autoInvisEnabled = cfg.autoInvisEnabled end
+           if cfg.autoReorderEnabled ~= nil then S.autoReorderEnabled = cfg.autoReorderEnabled end
+           if cfg.autoReorderAmount ~= nil then S.autoReorderAmount = cfg.autoReorderAmount end
+           if cfg.generalEquipWeaponEnabled ~= nil then S.generalEquipWeaponEnabled = cfg.generalEquipWeaponEnabled end
+           if cfg.generalAutoSwingEnabled ~= nil then S.generalAutoSwingEnabled = cfg.generalAutoSwingEnabled end
+           if cfg.generalAutoFarmWeapons ~= nil and type(cfg.generalAutoFarmWeapons) == "table" then S.generalAutoFarmWeapons = cfg.generalAutoFarmWeapons end
+           -- Demon autofarm
+           if cfg.demonFarmMethod ~= nil then S.demonFarmMethod = tostring(cfg.demonFarmMethod) end
+           if cfg.demonTweenSpeed ~= nil then S.demonTweenSpeed = cfg.demonTweenSpeed end
+           if cfg.autoInvisDemonEnabled ~= nil then S.autoInvisDemonEnabled = cfg.autoInvisDemonEnabled end
+           if cfg.autoReorderDemonEnabled ~= nil then S.autoReorderDemonEnabled = cfg.autoReorderDemonEnabled end
+           if cfg.autoReorderDemonAmount ~= nil then S.autoReorderDemonAmount = cfg.autoReorderDemonAmount end
+           if cfg.demonEquipWeaponEnabled ~= nil then S.demonEquipWeaponEnabled = cfg.demonEquipWeaponEnabled end
+           if cfg.demonAutoSwingEnabled ~= nil then S.demonAutoSwingEnabled = cfg.demonAutoSwingEnabled end
+           if cfg.demonAutoFarmWeapons ~= nil and type(cfg.demonAutoFarmWeapons) == "table" then S.demonAutoFarmWeapons = cfg.demonAutoFarmWeapons end
+           -- NPC autofarm
+           if cfg.npcFarmMethod ~= nil then S.npcFarmMethod = tostring(cfg.npcFarmMethod) end
+           if cfg.npcTweenSpeed ~= nil then S.npcTweenSpeed = cfg.npcTweenSpeed end
+           if cfg.autoInvisNpcEnabled ~= nil then S.autoInvisNpcEnabled = cfg.autoInvisNpcEnabled end
+           if cfg.autoReorderNpcEnabled ~= nil then S.autoReorderNpcEnabled = cfg.autoReorderNpcEnabled end
+           if cfg.autoReorderNpcAmount ~= nil then S.autoReorderNpcAmount = cfg.autoReorderNpcAmount end
+           if cfg.npcEquipWeaponEnabled ~= nil then S.npcEquipWeaponEnabled = cfg.npcEquipWeaponEnabled end
+           if cfg.npcAutoSwingEnabled ~= nil then S.npcAutoSwingEnabled = cfg.npcAutoSwingEnabled end
+           if cfg.npcAutoFarmWeapons ~= nil and type(cfg.npcAutoFarmWeapons) == "table" then S.npcAutoFarmWeapons = cfg.npcAutoFarmWeapons end
+           -- Egg autofarm
+           if cfg.eggFarmMethod ~= nil then S.eggFarmMethod = tostring(cfg.eggFarmMethod) end
+           if cfg.eggTweenSpeed ~= nil then S.eggTweenSpeed = cfg.eggTweenSpeed end
+           if cfg.eggAutoInvisEnabled ~= nil then S.eggAutoInvisEnabled = cfg.eggAutoInvisEnabled end
+           if cfg.eggAutoReorderEnabled ~= nil then S.eggAutoReorderEnabled = cfg.eggAutoReorderEnabled end
+           if cfg.eggAutoReorderAmount ~= nil then S.eggAutoReorderAmount = cfg.eggAutoReorderAmount end
+           if cfg.eggEquipWeaponEnabled ~= nil then S.eggEquipWeaponEnabled = cfg.eggEquipWeaponEnabled end
+           if cfg.eggAutoSwingEnabled ~= nil then S.eggAutoSwingEnabled = cfg.eggAutoSwingEnabled end
+           if cfg.eggAutoFarmWeapons ~= nil and type(cfg.eggAutoFarmWeapons) == "table" then S.eggAutoFarmWeapons = cfg.eggAutoFarmWeapons end
            spawnNotification("Config '" .. name .. "' loaded!", "success")
            -- Sync all toggle labels to match loaded config state
            for _, syncFn in ipairs(_allToggleSyncs) do
@@ -5014,9 +7104,20 @@ do
            S.npcAutoSwingEnabled = false
            S.autoInvisNpcEnabled = false
            S.autoReorderNpcEnabled = false
+           S.eggAutofarmEnabled = false
+           S.eggIsFollowing = false
+           S.eggFarmMethod = "Teleport"
+           S.eggAutoInvisEnabled = false
+           S.eggAutoReorderEnabled = false
+           S.eggAutoReorderAmount = 1
+           S.eggEquipWeaponEnabled = false
+           S.eggAutoSwingEnabled = false
+           S.privateServerAutofarmEnabled = false
+           S.playerEspEnabled = false
            for gem, _ in pairs(S.activeGemEsp) do
-               if gem and gem:FindFirstChild("BillboardGui") then
-                   pcall(function() gem.BillboardGui:Destroy() end)
+               if gem then
+                   pcall(function() if gem:FindFirstChild("BillboardGui") then gem.BillboardGui:Destroy() end end)
+                   pcall(function() if gem:FindFirstChild("GemHighlight") then gem.GemHighlight:Destroy() end end)
                end
            end
            S.activeGemEsp = {}
@@ -5024,6 +7125,11 @@ do
                if obj then pcall(function() obj:Destroy() end) end
            end
            S.activeGeneralEsp = {}
+           for player, espData in pairs(S.activePlayerEsp) do
+               pcall(function() if espData.highlight then espData.highlight:Destroy() end end)
+               pcall(function() if espData.billboard then espData.billboard:Destroy() end end)
+           end
+           S.activePlayerEsp = {}
            pathVisualsFolder:ClearAllChildren()
        end
        local function doLoad()
@@ -6070,10 +8176,21 @@ do
            S.npcAutoSwingEnabled = false
            S.autoInvisNpcEnabled = false
            S.autoReorderNpcEnabled = false
+           S.eggAutofarmEnabled = false
+           S.eggIsFollowing = false
+           S.eggFarmMethod = "Teleport"
+           S.eggAutoInvisEnabled = false
+           S.eggAutoReorderEnabled = false
+           S.eggAutoReorderAmount = 1
+           S.eggEquipWeaponEnabled = false
+           S.eggAutoSwingEnabled = false
+           S.privateServerAutofarmEnabled = false
+           S.playerEspEnabled = false
            -- Clean up ESP
            for gem, _ in pairs(S.activeGemEsp) do
-               if gem and gem:FindFirstChild("BillboardGui") then
-                   pcall(function() gem.BillboardGui:Destroy() end)
+               if gem then
+                   pcall(function() if gem:FindFirstChild("BillboardGui") then gem.BillboardGui:Destroy() end end)
+                   pcall(function() if gem:FindFirstChild("GemHighlight") then gem.GemHighlight:Destroy() end end)
                end
            end
            S.activeGemEsp = {}
@@ -6081,6 +8198,11 @@ do
                if obj then pcall(function() obj:Destroy() end) end
            end
            S.activeGeneralEsp = {}
+           for player, espData in pairs(S.activePlayerEsp) do
+               pcall(function() if espData.highlight then espData.highlight:Destroy() end end)
+               pcall(function() if espData.billboard then espData.billboard:Destroy() end end)
+           end
+           S.activePlayerEsp = {}
            pathVisualsFolder:ClearAllChildren()
            -- Destroy all dropdown GUIs
            for _, ddGui in pairs(_allDropdownGuis) do
