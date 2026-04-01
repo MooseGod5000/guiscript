@@ -384,6 +384,8 @@ end
 local _buttonRegistry = {}
 local _currentRegistryTab = nil
 local _allToggleSyncs = {}
+local _allSliderSyncs = {}
+local _allDropdownSyncs = {}
 local function createToggleRow(name, parentList, getStateFn, onClickFn)
    local row, ic, lb, tp, bt, dia = createRow(name)
    row.Parent = parentList
@@ -447,7 +449,7 @@ local function createToggleRow(name, parentList, getStateFn, onClickFn)
    end)
    return row, updateVis
 end
-local function createSliderRow(name, parentList, defaultVal, onValueChanged, skipRegistry)
+local function createSliderRow(name, parentList, defaultVal, onValueChanged, skipRegistry, getStateFn)
    local row, sIc, sLb, sTp, sBt, sDi = createRow(name)
    row.Parent = parentList
    sIc.Visible = false
@@ -566,6 +568,16 @@ local function createSliderRow(name, parentList, defaultVal, onValueChanged, ski
    -- Register slider in button registry for Creator Mode picker
    if not skipRegistry and _currentRegistryTab then
        table.insert(_buttonRegistry, {name = name, tab = _currentRegistryTab, type = "slider", defaultVal = defaultVal, onValueChanged = onValueChanged})
+   end
+   -- Register slider sync for config load (same pattern as toggle syncs)
+   if getStateFn then
+       table.insert(_allSliderSyncs, function()
+           local v = getStateFn()
+           if v ~= nil then
+               currentVal = -1  -- force refresh
+               updateVal(v)
+           end
+       end)
    end
    return row, updateVal, function() return currentVal end
 end
@@ -872,6 +884,7 @@ local S = {
    eggAutoSwingEnabled = false,
    eggAutoFarmWeapons = {},
    eggCurrentTarget = nil,
+   keybinds = {},
 }
 -- Discord Webhook Stats Tracking (for PS Autofarm)
 local _webhookStats = {
@@ -984,8 +997,8 @@ if not pathVisualsFolder then
    pathVisualsFolder.Parent = workspace
 end
 -- Pre-declare tab titles and buttons (filled in tab sections below)
-local tabTitle1, tabTitle2, tabTitle3, tabTitle4, tabTitle5, tabTitle6, tabTitle7
-local tab1Btn, tab2Btn, tab3Btn, tab4Btn, tab5Btn, tab6Btn, tab7Btn
+local tabTitle1, tabTitle2, tabTitle3, tabTitle4, tabTitle5, tabTitle6, tabTitle7, tabTitle8
+local tab1Btn, tab2Btn, tab3Btn, tab4Btn, tab5Btn, tab6Btn, tab7Btn, tab8Btn
 -- Forward-declare spawnNotification (defined later)
 local spawnNotification
 -- ======================================================
@@ -1189,13 +1202,15 @@ do
            end)
        end
    end
+   -- Register weapon dropdown sync for config load
+   table.insert(_allDropdownSyncs, function() updateWeaponDropdownText() end)
    if _currentRegistryTab then table.insert(_buttonRegistry, {name = "Weapons", tab = _currentRegistryTab, type = "special", onClickFn = function() updateWeaponDropdown(); showWDrop() end}) end
    wRow.MouseButton1Click:Connect(function()
        _createParticleBurst(wRow)
        updateWeaponDropdown()
        showWDrop()
    end)
-    createSliderRow("AutoDupe Amount", elementsList, 1, function(val) S.weaponReorderAmount = val end)
+      createSliderRow("AutoDupe Amount", elementsList, 1, function(val) S.weaponReorderAmount = val end, nil, function() return S.weaponReorderAmount end)
    -- AutoDupe button
    local rRow, rIcon, rLabel, rTop, rBot, rDia = createRow("Start AutoDuping")
    rRow.Parent = elementsList
@@ -1554,7 +1569,7 @@ do
    createToggleRow("Noclip", elementsList, function() return S.noclipEnabled end, function()
        if not S.noclipEnabled then enableNoclip() else disableNoclip() end
    end)
-   createSliderRow("TP Walk Speed", elementsList, 1, function(val) S.tpWalkSpeed = val end)
+   createSliderRow("TP Walk Speed", elementsList, 1, function(val) S.tpWalkSpeed = val end, nil, function() return S.tpWalkSpeed end)
    createToggleRow("Teleport Walk", elementsList, function() return S.tpWalkEnabled end, function()
        S.tpWalkEnabled = not S.tpWalkEnabled
        if S.tpWalkEnabled then S.reenableTpWalk = true startTpWalkLoop() else S.reenableTpWalk = false end
@@ -1978,6 +1993,16 @@ do
        end)
    end
    updateMapHighlight()
+   -- Register dropdown sync for config load
+   table.insert(_allDropdownSyncs, function()
+       if S.selectedMap == "None" then
+           mOpenLbl.Text = "\226\137\161 None"
+       else
+           local display = S.selectedMap:gsub(":mapvote ", "")
+           mOpenLbl.Text = "\226\137\161 " .. display
+       end
+       updateMapHighlight()
+   end)
    if _currentRegistryTab then table.insert(_buttonRegistry, {name = "Map Vote", tab = _currentRegistryTab, type = "special", onClickFn = function() showMapDrop() end}) end
    mRow.MouseButton1Click:Connect(function()
        _createParticleBurst(mRow)
@@ -2847,7 +2872,7 @@ do
                S.generalTweenSpeed = val
                S.demonTweenSpeed = val
            end
-       end, true)
+       end, true, function() return S.psFarmTweenSpeed end)
        local psFmTweenVisible = false
        local function showPsFmTweenSlider()
            if psFmTweenVisible then return end
@@ -2933,6 +2958,23 @@ do
            psFmTweenContainer.Size = UDim2.new(1, 0, 0, 38)
            psFmTweenVisible = true
        end
+       -- Register dropdown sync for config load
+       table.insert(_allDropdownSyncs, function()
+           psFmOpenLbl.Text = "\226\137\161 " .. S.psFarmMethod
+           for _, child in pairs(psFmDropList:GetChildren()) do
+               if child:IsA("TextButton") then
+                   local mName = child.Text:gsub("^%s*\226\156\147%s*", ""):gsub("^%s+", "")
+                   if mName == S.psFarmMethod then
+                       child.BackgroundColor3 = Color3.fromRGB(0, 150, 255)
+                       child.Text = "  \226\156\147 " .. mName
+                   else
+                       child.BackgroundColor3 = Color3.fromRGB(24, 24, 24)
+                       child.Text = "  " .. mName
+                   end
+               end
+           end
+           if S.psFarmMethod == "Tween" then showPsFmTweenSlider() else hidePsFmTweenSlider() end
+       end)
    end
    -- PS Autofarm: Auto Invis toggle
    do
@@ -2970,7 +3012,7 @@ do
                S.autoReorderAmount = val
                S.autoReorderDemonAmount = val
            end
-       end)
+       end, nil, function() return S.psAutoReorderAmount end)
        psDupeSliderRow.LayoutOrder = nextOrder()
    end
    -- PS Autofarm: Weapons for AutoFarming dropdown (moved here, under dupe slider)
@@ -3062,6 +3104,8 @@ do
                end)
            end
        end
+       -- Register weapon dropdown sync for config load (PS)
+       table.insert(_allDropdownSyncs, function() updatePsWeaponText() end)
        if _currentRegistryTab then table.insert(_buttonRegistry, {name = "PS Weapons for AutoFarming", tab = _currentRegistryTab, type = "special", onClickFn = function() updatePsWeaponDropdown(); showPsWafDrop() end}) end
        psWafRow.MouseButton1Click:Connect(function()
            _createParticleBurst(psWafRow)
@@ -3099,7 +3143,7 @@ do
        psGmTweenContainer.ClipsDescendants = true
        psGmTweenContainer.LayoutOrder = nextOrder()
        psGmTweenContainer.Parent = psList
-       local psGmTsRow, psGmTsUpdateVal, psGmTsGetVal = createSliderRow("Tween Speed", psGmTweenContainer, S.gemTweenSpeed, function(val) S.gemTweenSpeed = val end, true)
+       local psGmTsRow, psGmTsUpdateVal, psGmTsGetVal = createSliderRow("Tween Speed", psGmTweenContainer, S.gemTweenSpeed, function(val) S.gemTweenSpeed = val end, true, function() return S.gemTweenSpeed end)
        local psGmTweenVisible = false
        local function showPsGmTweenSlider()
            if psGmTweenVisible then return end
@@ -3188,6 +3232,23 @@ do
            psGmTweenContainer.Size = UDim2.new(1, 0, 0, 38)
            psGmTweenVisible = true
        end
+       -- Register dropdown sync for config load
+       table.insert(_allDropdownSyncs, function()
+           psGmOpenLbl.Text = "\226\137\161 " .. S.gemFarmMethod
+           for _, child in pairs(psGmDropList:GetChildren()) do
+               if child:IsA("TextButton") then
+                   local mName = child.Text:gsub("^%s*\226\156\147%s*", ""):gsub("^%s+", "")
+                   if mName == S.gemFarmMethod then
+                       child.BackgroundColor3 = Color3.fromRGB(0, 150, 255)
+                       child.Text = "  \226\156\147 " .. mName
+                   else
+                       child.BackgroundColor3 = Color3.fromRGB(24, 24, 24)
+                       child.Text = "  " .. mName
+                   end
+               end
+           end
+           if S.gemFarmMethod == "Tween Farm" then showPsGmTweenSlider() else hidePsGmTweenSlider() end
+       end)
    end
    -- PS Autofarm: Select Gems dropdown (shares selectedGems)
    do
@@ -3501,7 +3562,7 @@ do
        tweenSpeedContainer.ClipsDescendants = true
        tweenSpeedContainer.LayoutOrder = nextOrder()
        tweenSpeedContainer.Parent = gemList
-       local tsRow, tsUpdateVal, tsGetVal = createSliderRow("Tween Speed", tweenSpeedContainer, S.gemTweenSpeed, function(val) S.gemTweenSpeed = val end, true)
+       local tsRow, tsUpdateVal, tsGetVal = createSliderRow("Tween Speed", tweenSpeedContainer, S.gemTweenSpeed, function(val) S.gemTweenSpeed = val end, true, function() return S.gemTweenSpeed end)
        local tweenSliderVisible = false
        local function showTweenSlider()
            if tweenSliderVisible then return end
@@ -3586,6 +3647,23 @@ do
            tweenSpeedContainer.Size = UDim2.new(1, 0, 0, 38)
            tweenSliderVisible = true
        end
+       -- Register dropdown sync for config load
+       table.insert(_allDropdownSyncs, function()
+           gmOpenLbl.Text = "\226\137\161 " .. S.gemFarmMethod
+           for _, child in pairs(gmDropList:GetChildren()) do
+               if child:IsA("TextButton") then
+                   local mName = child.Text:gsub("^%s*\226\156\147%s*", ""):gsub("^%s+", "")
+                   if mName == S.gemFarmMethod then
+                       child.BackgroundColor3 = Color3.fromRGB(0, 150, 255)
+                       child.Text = "  \226\156\147 " .. mName
+                   else
+                       child.BackgroundColor3 = Color3.fromRGB(24, 24, 24)
+                       child.Text = "  " .. mName
+                   end
+               end
+           end
+           if S.gemFarmMethod == "Tween Farm" then showTweenSlider() else hideTweenSlider() end
+       end)
    end
    -- Gem select dropdown (multi-select)
    local gRow, gIcon, gLabel, gTop, gBot, gDia = createRow("Select Gems")
@@ -3720,7 +3798,7 @@ do
        genTweenSpeedContainer.ClipsDescendants = true
        genTweenSpeedContainer.LayoutOrder = nextOrder()
        genTweenSpeedContainer.Parent = genList
-       local genTsRow, genTsUpdateVal, genTsGetVal = createSliderRow("Tween Speed", genTweenSpeedContainer, S.generalTweenSpeed, function(val) S.generalTweenSpeed = val end, true)
+       local genTsRow, genTsUpdateVal, genTsGetVal = createSliderRow("Tween Speed", genTweenSpeedContainer, S.generalTweenSpeed, function(val) S.generalTweenSpeed = val end, true, function() return S.generalTweenSpeed end)
        local genTweenSliderVisible = false
        local function showGenTweenSlider()
            if genTweenSliderVisible then return end
@@ -3803,6 +3881,23 @@ do
            genTweenSpeedContainer.Size = UDim2.new(1, 0, 0, 38)
            genTweenSliderVisible = true
        end
+       -- Register dropdown sync for config load
+       table.insert(_allDropdownSyncs, function()
+           gmGenOpenLbl.Text = "\226\137\161 " .. S.generalFarmMethod
+           for _, child in pairs(gmGenDropList:GetChildren()) do
+               if child:IsA("TextButton") then
+                   local mName = child.Text:gsub("^%s*\226\156\147%s*", ""):gsub("^%s+", "")
+                   if mName == S.generalFarmMethod then
+                       child.BackgroundColor3 = Color3.fromRGB(0, 150, 255)
+                       child.Text = "  \226\156\147 " .. mName
+                   else
+                       child.BackgroundColor3 = Color3.fromRGB(24, 24, 24)
+                       child.Text = "  " .. mName
+                   end
+               end
+           end
+           if S.generalFarmMethod == "Tween" then showGenTweenSlider() else hideGenTweenSlider() end
+       end)
    end
    -- Auto Invis toggle (General)
    do
@@ -3823,7 +3918,7 @@ do
    end
     -- Auto AutoDupe Amount slider (General)
    do
-       local reorderSliderRow = createSliderRow("AutoDupe Amount", genList, 1, function(val) S.autoReorderAmount = val end)
+       local reorderSliderRow = createSliderRow("AutoDupe Amount", genList, 1, function(val) S.autoReorderAmount = val end, nil, function() return S.autoReorderAmount end)
        reorderSliderRow.LayoutOrder = nextOrder()
    end
    -- Weapons for AutoFarming dropdown (General)
@@ -3906,6 +4001,8 @@ do
                end)
            end
        end
+       -- Register weapon dropdown sync for config load (General)
+       table.insert(_allDropdownSyncs, function() updateGenWeaponText() end)
        if _currentRegistryTab then table.insert(_buttonRegistry, {name = "Weapons for AutoFarming (General)", tab = _currentRegistryTab, type = "special", onClickFn = function() updateGenWeaponDropdown(); showWafDrop() end}) end
        wafRow.MouseButton1Click:Connect(function()
            _createParticleBurst(wafRow)
@@ -4006,7 +4103,7 @@ do
        demonTweenSpeedContainer.ClipsDescendants = true
        demonTweenSpeedContainer.LayoutOrder = nextOrder()
        demonTweenSpeedContainer.Parent = demonList
-       local demonTsRow, demonTsUpdateVal, demonTsGetVal = createSliderRow("Tween Speed", demonTweenSpeedContainer, S.demonTweenSpeed, function(val) S.demonTweenSpeed = val end, true)
+       local demonTsRow, demonTsUpdateVal, demonTsGetVal = createSliderRow("Tween Speed", demonTweenSpeedContainer, S.demonTweenSpeed, function(val) S.demonTweenSpeed = val end, true, function() return S.demonTweenSpeed end)
        local demonTweenSliderVisible = false
        local function showDemonTweenSlider()
            if demonTweenSliderVisible then return end
@@ -4089,6 +4186,23 @@ do
            demonTweenSpeedContainer.Size = UDim2.new(1, 0, 0, 38)
            demonTweenSliderVisible = true
        end
+       -- Register dropdown sync for config load
+       table.insert(_allDropdownSyncs, function()
+           gmDemonOpenLbl.Text = "\226\137\161 " .. S.demonFarmMethod
+           for _, child in pairs(gmDemonDropList:GetChildren()) do
+               if child:IsA("TextButton") then
+                   local mName = child.Text:gsub("^%s*\226\156\147%s*", ""):gsub("^%s+", "")
+                   if mName == S.demonFarmMethod then
+                       child.BackgroundColor3 = Color3.fromRGB(0, 150, 255)
+                       child.Text = "  \226\156\147 " .. mName
+                   else
+                       child.BackgroundColor3 = Color3.fromRGB(24, 24, 24)
+                       child.Text = "  " .. mName
+                   end
+               end
+           end
+           if S.demonFarmMethod == "Tween" then showDemonTweenSlider() else hideDemonTweenSlider() end
+       end)
    end
    -- Auto Invis toggle (Demon)
    do
@@ -4109,7 +4223,7 @@ do
    end
     -- Auto AutoDupe Amount slider (Demon)
    do
-       local reorderDemonSliderRow = createSliderRow("AutoDupe Amount", demonList, 1, function(val) S.autoReorderDemonAmount = val end)
+       local reorderDemonSliderRow = createSliderRow("AutoDupe Amount", demonList, 1, function(val) S.autoReorderDemonAmount = val end, nil, function() return S.autoReorderDemonAmount end)
        reorderDemonSliderRow.LayoutOrder = nextOrder()
    end
    -- Weapons for AutoFarming dropdown (Demon)
@@ -4192,6 +4306,8 @@ do
                end)
            end
        end
+       -- Register weapon dropdown sync for config load (Demon)
+       table.insert(_allDropdownSyncs, function() updateDemonWeaponText() end)
        if _currentRegistryTab then table.insert(_buttonRegistry, {name = "Weapons for AutoFarming (Demon)", tab = _currentRegistryTab, type = "special", onClickFn = function() updateDemonWeaponDropdown(); showWafDDrop() end}) end
        wafDRow.MouseButton1Click:Connect(function()
            _createParticleBurst(wafDRow)
@@ -4292,7 +4408,7 @@ do
        npcTweenSpeedContainer.ClipsDescendants = true
        npcTweenSpeedContainer.LayoutOrder = nextOrder()
        npcTweenSpeedContainer.Parent = npcList
-       local npcTsRow, npcTsUpdateVal, npcTsGetVal = createSliderRow("Tween Speed", npcTweenSpeedContainer, S.npcTweenSpeed, function(val) S.npcTweenSpeed = val end, true)
+       local npcTsRow, npcTsUpdateVal, npcTsGetVal = createSliderRow("Tween Speed", npcTweenSpeedContainer, S.npcTweenSpeed, function(val) S.npcTweenSpeed = val end, true, function() return S.npcTweenSpeed end)
        local npcTweenSliderVisible = false
        local function showNpcTweenSlider()
            if npcTweenSliderVisible then return end
@@ -4375,6 +4491,23 @@ do
            npcTweenSpeedContainer.Size = UDim2.new(1, 0, 0, 38)
            npcTweenSliderVisible = true
        end
+       -- Register dropdown sync for config load
+       table.insert(_allDropdownSyncs, function()
+           gmNpcOpenLbl.Text = "\226\137\161 " .. S.npcFarmMethod
+           for _, child in pairs(gmNpcDropList:GetChildren()) do
+               if child:IsA("TextButton") then
+                   local mName = child.Text:gsub("^%s*\226\156\147%s*", ""):gsub("^%s+", "")
+                   if mName == S.npcFarmMethod then
+                       child.BackgroundColor3 = Color3.fromRGB(0, 150, 255)
+                       child.Text = "  \226\156\147 " .. mName
+                   else
+                       child.BackgroundColor3 = Color3.fromRGB(24, 24, 24)
+                       child.Text = "  " .. mName
+                   end
+               end
+           end
+           if S.npcFarmMethod == "Tween" then showNpcTweenSlider() else hideNpcTweenSlider() end
+       end)
    end
    -- Auto Invis toggle (NPC)
    do
@@ -4395,7 +4528,7 @@ do
    end
     -- Auto AutoDupe Amount slider (NPC)
    do
-       local reorderNpcSliderRow = createSliderRow("AutoDupe Amount", npcList, 1, function(val) S.autoReorderNpcAmount = val end)
+       local reorderNpcSliderRow = createSliderRow("AutoDupe Amount", npcList, 1, function(val) S.autoReorderNpcAmount = val end, nil, function() return S.autoReorderNpcAmount end)
        reorderNpcSliderRow.LayoutOrder = nextOrder()
    end
    -- Weapons for AutoFarming dropdown (NPC)
@@ -4478,6 +4611,8 @@ do
                end)
            end
        end
+       -- Register weapon dropdown sync for config load (NPC)
+       table.insert(_allDropdownSyncs, function() updateNpcWeaponText() end)
        if _currentRegistryTab then table.insert(_buttonRegistry, {name = "Weapons for AutoFarming (NPC)", tab = _currentRegistryTab, type = "special", onClickFn = function() updateNpcWeaponDropdown(); showWafNDrop() end}) end
        wafNRow.MouseButton1Click:Connect(function()
            _createParticleBurst(wafNRow)
@@ -4609,7 +4744,7 @@ do
        eggTweenSpeedContainer.ClipsDescendants = true
        eggTweenSpeedContainer.LayoutOrder = nextOrder()
        eggTweenSpeedContainer.Parent = eggList
-       local eggTsRow, eggTsUpdateVal, eggTsGetVal = createSliderRow("Tween Speed", eggTweenSpeedContainer, S.eggTweenSpeed, function(val) S.eggTweenSpeed = val end, true)
+       local eggTsRow, eggTsUpdateVal, eggTsGetVal = createSliderRow("Tween Speed", eggTweenSpeedContainer, S.eggTweenSpeed, function(val) S.eggTweenSpeed = val end, true, function() return S.eggTweenSpeed end)
        local eggTweenSliderVisible = false
        local function showEggTweenSlider()
            if eggTweenSliderVisible then return end
@@ -4692,6 +4827,23 @@ do
            eggTweenSpeedContainer.Size = UDim2.new(1, 0, 0, 38)
            eggTweenSliderVisible = true
        end
+       -- Register dropdown sync for config load
+       table.insert(_allDropdownSyncs, function()
+           gmEggOpenLbl.Text = "\226\137\161 " .. S.eggFarmMethod
+           for _, child in pairs(gmEggDropList:GetChildren()) do
+               if child:IsA("TextButton") then
+                   local mName = child.Text:gsub("^%s*\226\156\147%s*", ""):gsub("^%s+", "")
+                   if mName == S.eggFarmMethod then
+                       child.BackgroundColor3 = Color3.fromRGB(0, 150, 255)
+                       child.Text = "  \226\156\147 " .. mName
+                   else
+                       child.BackgroundColor3 = Color3.fromRGB(24, 24, 24)
+                       child.Text = "  " .. mName
+                   end
+               end
+           end
+           if S.eggFarmMethod == "Tween" then showEggTweenSlider() else hideEggTweenSlider() end
+       end)
    end
    -- Auto Invis toggle (Egg)
    do
@@ -4712,7 +4864,7 @@ do
    end
    -- AutoDupe Amount slider (Egg)
    do
-       local reorderEggSliderRow = createSliderRow("AutoDupe Amount", eggList, 1, function(val) S.eggAutoReorderAmount = val end)
+       local reorderEggSliderRow = createSliderRow("AutoDupe Amount", eggList, 1, function(val) S.eggAutoReorderAmount = val end, nil, function() return S.eggAutoReorderAmount end)
        reorderEggSliderRow.LayoutOrder = nextOrder()
    end
    -- Weapons for AutoFarming dropdown (Egg)
@@ -4795,6 +4947,8 @@ do
                end)
            end
        end
+       -- Register weapon dropdown sync for config load (Egg)
+       table.insert(_allDropdownSyncs, function() updateEggWeaponText() end)
        if _currentRegistryTab then table.insert(_buttonRegistry, {name = "Weapons for AutoFarming (Egg)", tab = _currentRegistryTab, type = "special", onClickFn = function() updateEggWeaponDropdown(); showWafEggDrop() end}) end
        wafEggRow.MouseButton1Click:Connect(function()
            _createParticleBurst(wafEggRow)
@@ -5277,6 +5431,12 @@ do
                            if S.psWebhookEnabled then _webhookStats.generalsKilled = _webhookStats.generalsKilled + 1 end
                            S.generalCooldownEnd = tick() + 35
                            if S.autoInvisEnabled and S._invisEnabled then disableInvis() end
+                           -- Auto-disable Player section invis when general dies
+                           if S._invisEnabled then
+                               disableInvis()
+                               spawnNotification("General died. Disabling invis to avoid bugs.", "warning")
+                               for _, syncFn in ipairs(_allToggleSyncs) do pcall(syncFn) end
+                           end
                        end
                    else
                        if wasFollowing then
@@ -5287,6 +5447,12 @@ do
                            if S.psWebhookEnabled then _webhookStats.generalsKilled = _webhookStats.generalsKilled + 1 end
                            S.generalCooldownEnd = tick() + 35
                            if S.autoInvisEnabled and S._invisEnabled then disableInvis() end
+                           -- Auto-disable Player section invis when general dies
+                           if S._invisEnabled then
+                               disableInvis()
+                               spawnNotification("General died. Disabling invis to avoid bugs.", "warning")
+                               for _, syncFn in ipairs(_allToggleSyncs) do pcall(syncFn) end
+                           end
                        end
                    end
                else
@@ -6441,7 +6607,7 @@ do
        if hubMain then
            hubMain.GroupTransparency = t
        end
-   end)
+   end, nil, function() return S.guiTransparency end)
     -- ======= AUTODUPE COOLDOWN SLIDER (decimal 1-100) ======= --
    do
        local cdRow, cdIc, cdLb, cdTp, cdBt, cdDi = createRow("Dupe Cooldown")
@@ -6559,6 +6725,10 @@ do
            _TweenService:Create(cdBt, tI, {Size = UDim2.new(0, 0, 0, 2)}):Play()
            cdDi.Visible = false
        end)
+   table.insert(_allSliderSyncs, function()
+       cdCurrentVal = -1  -- force refresh
+       cdUpdateVal(S.dupeCooldown)
+   end)
    end
    -- ======= NOTIFICATIONS TOGGLE ======= --
    createToggleRow("Notifications", elementsList, function() return S.notificationsEnabled end, function()
@@ -6609,7 +6779,7 @@ do
        return _configPath .. "/" .. name .. ".cfg"
    end
    local function getAllStateValues()
-       return {
+       local vals = {
            -- Player settings
            equipWeaponEnabled = S.equipWeaponEnabled,
            farmWeaponEnabled = S.farmWeaponEnabled,
@@ -6619,6 +6789,7 @@ do
            antiAfkEnabled = S.antiAfkEnabled,
            selectedWeapons = S.selectedWeapons,
            weaponReorderAmount = S.weaponReorderAmount,
+           tpWalkSpeed = S.tpWalkSpeed,
            -- Visuals / misc
            gemEspEnabled = S.gemEspEnabled,
            humanGeneralEspEnabled = S.humanGeneralEspEnabled,
@@ -6692,6 +6863,15 @@ do
            -- Misc
            autoEternalFireEnabled = S.autoEternalFireEnabled,
        }
+       -- Serialize keybinds: store as "KEYBINDS:buttonName=KeyCodeName" entries
+       local kbParts = {}
+       for btnName, keyCode in pairs(S.keybinds) do
+           if keyCode and typeof(keyCode) == "EnumItem" then
+               table.insert(kbParts, btnName .. ":" .. keyCode.Name)
+           end
+       end
+       vals._keybinds = table.concat(kbParts, "|")
+       return vals
    end
    local function serializeConfig(tbl)
        local parts = {}
@@ -6772,6 +6952,7 @@ do
            if cfg.farmWeaponEnabled ~= nil then S.farmWeaponEnabled = cfg.farmWeaponEnabled end
            if cfg.selectedWeapons ~= nil and type(cfg.selectedWeapons) == "table" then S.selectedWeapons = cfg.selectedWeapons end
            if cfg.weaponReorderAmount ~= nil then S.weaponReorderAmount = cfg.weaponReorderAmount end
+           if cfg.tpWalkSpeed ~= nil then S.tpWalkSpeed = cfg.tpWalkSpeed end
            -- Visuals / misc
            if cfg.gemEspEnabled ~= nil then S.gemEspEnabled = cfg.gemEspEnabled end
            if cfg.humanGeneralEspEnabled ~= nil then S.humanGeneralEspEnabled = cfg.humanGeneralEspEnabled end
@@ -6781,6 +6962,21 @@ do
            if cfg.selectedMap ~= nil then S.selectedMap = tostring(cfg.selectedMap) end
            if cfg.dupeCooldown ~= nil then S.dupeCooldown = cfg.dupeCooldown end
            if cfg.autoEternalFireEnabled ~= nil then S.autoEternalFireEnabled = cfg.autoEternalFireEnabled end
+           -- Keybinds
+           if cfg._keybinds ~= nil and type(cfg._keybinds) == "string" and cfg._keybinds ~= "" then
+               S.keybinds = {}
+               for entry in cfg._keybinds:gmatch("[^|]+") do
+                   local btnName, keyName = entry:match("^(.+):([^:]+)$")
+                   if btnName and keyName then
+                       local ok, kc = pcall(function() return Enum.KeyCode[keyName] end)
+                       if ok and kc then
+                           S.keybinds[btnName] = kc
+                       end
+                   end
+               end
+           elseif cfg._keybinds == "" then
+               S.keybinds = {}
+           end
            -- Gem autofarm
            if cfg.gemFarmMethod ~= nil then S.gemFarmMethod = tostring(cfg.gemFarmMethod) end
            if cfg.gemTweenSpeed ~= nil then S.gemTweenSpeed = cfg.gemTweenSpeed end
@@ -6824,7 +7020,153 @@ do
            spawnNotification("Config '" .. name .. "' loaded!", "success")
            -- Sync all toggle labels to match loaded config state
            for _, syncFn in ipairs(_allToggleSyncs) do
-               syncFn()
+               pcall(syncFn)
+           end
+           -- Sync all slider UIs to match loaded config state
+           for _, syncFn in ipairs(_allSliderSyncs) do
+               pcall(syncFn)
+           end
+           -- Sync all dropdown UIs to match loaded config state
+           for _, syncFn in ipairs(_allDropdownSyncs) do
+               pcall(syncFn)
+           end
+           -- Restart equip weapon / auto swing loops if they were enabled by config
+           -- (These loops only run via task.spawn inside click handlers, so loading state alone won't start them)
+           if S.generalEquipWeaponEnabled then
+               task.spawn(function()
+                   while S.generalEquipWeaponEnabled do
+                       task.wait(0.1)
+                       if S.generalIsFollowing then
+                           local weapons = resolveAutofarmWeapons("General")
+                           local char = _Players.LocalPlayer.Character
+                           local hum = char and char:FindFirstChildOfClass("Humanoid")
+                           if char and hum and hum.Health > 0 and #weapons > 0 then
+                               pcall(function()
+                                   for _, v in pairs(_Players.LocalPlayer.Backpack:GetChildren()) do
+                                       if table.find(weapons, v.Name) then v.Parent = char end
+                                   end
+                               end)
+                           end
+                       end
+                   end
+               end)
+           end
+           if S.generalAutoSwingEnabled then
+               task.spawn(function()
+                   while S.generalAutoSwingEnabled do
+                       task.wait(0.1)
+                       if S.generalIsFollowing and _Players.LocalPlayer.Character then
+                           local weapons = resolveAutofarmWeapons("General")
+                           if #weapons > 0 then
+                               for _, v in pairs(_Players.LocalPlayer.Character:GetChildren()) do
+                                   if table.find(weapons, v.Name) then v:Activate() end
+                               end
+                           end
+                       end
+                   end
+               end)
+           end
+           if S.demonEquipWeaponEnabled then
+               task.spawn(function()
+                   while S.demonEquipWeaponEnabled do
+                       task.wait(0.1)
+                       if S.demonIsFollowing then
+                           local weapons = resolveAutofarmWeapons("Demon")
+                           local char = _Players.LocalPlayer.Character
+                           local hum = char and char:FindFirstChildOfClass("Humanoid")
+                           if char and hum and hum.Health > 0 and #weapons > 0 then
+                               pcall(function()
+                                   for _, v in pairs(_Players.LocalPlayer.Backpack:GetChildren()) do
+                                       if table.find(weapons, v.Name) then v.Parent = char end
+                                   end
+                               end)
+                           end
+                       end
+                   end
+               end)
+           end
+           if S.demonAutoSwingEnabled then
+               task.spawn(function()
+                   while S.demonAutoSwingEnabled do
+                       task.wait(0.1)
+                       if S.demonIsFollowing and _Players.LocalPlayer.Character then
+                           local weapons = resolveAutofarmWeapons("Demon")
+                           if #weapons > 0 then
+                               for _, v in pairs(_Players.LocalPlayer.Character:GetChildren()) do
+                                   if table.find(weapons, v.Name) then v:Activate() end
+                               end
+                           end
+                       end
+                   end
+               end)
+           end
+           if S.npcEquipWeaponEnabled then
+               task.spawn(function()
+                   while S.npcEquipWeaponEnabled do
+                       task.wait(0.1)
+                       if S.npcIsFollowing then
+                           local weapons = resolveAutofarmWeapons("NPC")
+                           local char = _Players.LocalPlayer.Character
+                           local hum = char and char:FindFirstChildOfClass("Humanoid")
+                           if char and hum and hum.Health > 0 and #weapons > 0 then
+                               pcall(function()
+                                   for _, v in pairs(_Players.LocalPlayer.Backpack:GetChildren()) do
+                                       if table.find(weapons, v.Name) then v.Parent = char end
+                                   end
+                               end)
+                           end
+                       end
+                   end
+               end)
+           end
+           if S.npcAutoSwingEnabled then
+               task.spawn(function()
+                   while S.npcAutoSwingEnabled do
+                       task.wait(0.1)
+                       if S.npcIsFollowing and _Players.LocalPlayer.Character then
+                           local weapons = resolveAutofarmWeapons("NPC")
+                           if #weapons > 0 then
+                               for _, v in pairs(_Players.LocalPlayer.Character:GetChildren()) do
+                                   if table.find(weapons, v.Name) then v:Activate() end
+                               end
+                           end
+                       end
+                   end
+               end)
+           end
+           if S.eggEquipWeaponEnabled then
+               task.spawn(function()
+                   while S.eggEquipWeaponEnabled do
+                       task.wait(0.1)
+                       if S.eggIsFollowing then
+                           local weapons = S.eggAutoFarmWeapons
+                           local char = _Players.LocalPlayer.Character
+                           local hum = char and char:FindFirstChildOfClass("Humanoid")
+                           if char and hum and hum.Health > 0 and #weapons > 0 then
+                               pcall(function()
+                                   for _, v in pairs(_Players.LocalPlayer.Backpack:GetChildren()) do
+                                       if table.find(weapons, v.Name) then v.Parent = char end
+                                   end
+                               end)
+                           end
+                       end
+                   end
+               end)
+           end
+           if S.eggAutoSwingEnabled then
+               task.spawn(function()
+                   while S.eggAutoSwingEnabled do
+                       task.wait(0.1)
+                       if S.eggIsFollowing and _Players.LocalPlayer.Character then
+                           local weapons = S.eggAutoFarmWeapons
+                           if #weapons > 0 then
+                               for _, v in pairs(_Players.LocalPlayer.Character:GetChildren()) do
+                                   if table.find(weapons, v.Name) then v:Activate() end
+                               end
+                           end
+                       end
+                   end
+               end)
            end
        end
    end
@@ -7137,6 +7479,8 @@ do
                resetAllToggles()
                loadConfig(S.selectedConfigName)
                for _, syncFn in ipairs(_allToggleSyncs) do syncFn() end
+               for _, syncFn in ipairs(_allSliderSyncs) do pcall(syncFn) end
+               for _, syncFn in ipairs(_allDropdownSyncs) do pcall(syncFn) end
            else
                spawnNotification("No config selected!", "error")
            end
@@ -7277,6 +7621,487 @@ do
    end)
    end -- end Config System do block
 end
+-- ======================================================
+_currentRegistryTab = nil
+-- ============== TAB 8: KEYBINDS CONTENT ===============
+-- ======================================================
+do
+   local btn, indicator, label = createTabButton("KEYBINDS", 290)
+   tab8Btn = btn
+   local contentArea = createContentArea()
+   tabButtons["KEYBINDS"] = {btn = btn, indicator = indicator, label = label}
+   tabContents["KEYBINDS"] = contentArea
+   createTabBackground(contentArea)
+   local title, elementsList = createTabLayout(contentArea)
+   tabTitle8 = title
+
+   -- Keybind state
+   local _keybindListening = false
+   local _keybindListeningBtn = nil
+   local _keybindListenConn = nil
+   local _keybindRows = {} -- {registryName = {keybindLabel, resetBtn, ...}}
+
+   -- Helper: get keybind display name for a key
+   local function getKeyDisplayName(keyCode)
+       if not keyCode then return "None" end
+       return keyCode.Name
+   end
+
+   -- Helper: stop listening for keybind
+   local function stopKeybindListening()
+       _keybindListening = false
+       if _keybindListenConn then _keybindListenConn:Disconnect() _keybindListenConn = nil end
+       if _keybindListeningBtn then
+           local rowData = nil
+           for _, rd in pairs(_keybindRows) do
+               if rd.keybindBtn == _keybindListeningBtn then rowData = rd break end
+           end
+           if rowData then
+               rowData.keybindLabel.Text = getKeyDisplayName(S.keybinds[rowData.registryName])
+               rowData.keybindBg.BorderColor3 = Color3.fromRGB(60, 60, 60)
+               rowData.keybindLabel.TextColor3 = Color3.new(1, 1, 1)
+           end
+           _keybindListeningBtn = nil
+       end
+   end
+
+   -- Search bar
+   local kbSearchBarBg = Instance.new("Frame")
+   kbSearchBarBg.Size = UDim2.new(1, 0, 0, 32)
+   kbSearchBarBg.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
+   kbSearchBarBg.BorderSizePixel = 1
+   kbSearchBarBg.BorderColor3 = Color3.fromRGB(50, 50, 50)
+   kbSearchBarBg.LayoutOrder = 0
+   kbSearchBarBg.Parent = elementsList
+   Instance.new("UICorner", kbSearchBarBg).CornerRadius = UDim.new(0, 6)
+   local kbSearchBox = Instance.new("TextBox")
+   kbSearchBox.Size = UDim2.new(1, -20, 1, 0)
+   kbSearchBox.Position = UDim2.new(0, 10, 0, 0)
+   kbSearchBox.BackgroundTransparency = 1
+   kbSearchBox.TextColor3 = Color3.new(1, 1, 1)
+   kbSearchBox.PlaceholderText = "Search keybinds..."
+   kbSearchBox.PlaceholderColor3 = Color3.fromRGB(100, 100, 100)
+   kbSearchBox.Text = ""
+   kbSearchBox.Font = Enum.Font.GothamMedium
+   kbSearchBox.TextSize = 13
+   kbSearchBox.TextXAlignment = Enum.TextXAlignment.Left
+   kbSearchBox.ClearTextOnFocus = false
+   kbSearchBox.Parent = kbSearchBarBg
+
+   -- Build keybind sections grouped by tab
+   -- Determine which tabs have keybindable buttons and their order
+   local kbTabOrder = {"WEAPONS", "PLAYER", "VISUALS", "GAME"}
+   -- Autofarm sub-sections
+   local kbAutofarmSections = {
+       {name = "General Settings", filter = function(e) return e.tab == "AUTOFARM" and not e.name:lower():find("demon") and not e.name:lower():find("npc") and not e.name:lower():find("egg") and not e.name:lower():find("gem") and not e.name:lower():find("ps ") and not e.name:lower():find("private server") and not e.name:lower():find("eternal fire") end},
+       {name = "Gem Settings", filter = function(e) return e.tab == "AUTOFARM" and (e.name:lower():find("gem") or e.name == "Target Unknowns") end},
+       {name = "General Autofarm", filter = function(e) return e.tab == "AUTOFARM" and (e.name:lower():find("general") or (e.name == "Autofarm General")) end},
+       {name = "Demon Autofarm", filter = function(e) return e.tab == "AUTOFARM" and (e.name:lower():find("demon") or e.name == "Autofarm Demon") end},
+       {name = "NPC Autofarm", filter = function(e) return e.tab == "AUTOFARM" and (e.name:lower():find("npc") or e.name == "Autofarm NPC") end},
+       {name = "Egg Autofarm", filter = function(e) return e.tab == "AUTOFARM" and (e.name:lower():find("egg") or e.name == "Autofarm Egg") end},
+       {name = "PS Autofarm", filter = function(e) return e.tab == "AUTOFARM" and (e.name:lower():find("ps ") or e.name:lower():find("private server") or e.name:lower():find("webhook")) end},
+       {name = "Misc Autofarm", filter = function(e) return e.tab == "AUTOFARM" and e.name:lower():find("eternal fire") end},
+   }
+   local kbSettingsEntries = {} -- for SETTINGS tab buttons
+
+   -- Helper: create a keybind row for a registry entry
+   local kbLayoutOrder = 0
+   local function nextKbOrder()
+       kbLayoutOrder = kbLayoutOrder + 1
+       return kbLayoutOrder
+   end
+
+   local function createKeybindRow(regEntry, parentList)
+       local rowName = regEntry.name
+       -- Main row frame
+       local row = Instance.new("TextButton")
+       row.Name = "KB_" .. rowName
+       row.Size = UDim2.new(1, 0, 0, 38)
+       row.BackgroundColor3 = Color3.fromRGB(24, 24, 24)
+       row.BorderSizePixel = 0
+       row.Text = ""
+       row.AutoButtonColor = false
+       row.LayoutOrder = nextKbOrder()
+       row.Parent = parentList
+
+       -- Diamond indicator
+       local diamond = Instance.new("Frame")
+       diamond.Size = UDim2.new(0, 6, 0, 6)
+       diamond.Position = UDim2.new(0, 10, 0.5, 0)
+       diamond.AnchorPoint = Vector2.new(0.5, 0.5)
+       diamond.Rotation = 45
+       diamond.BackgroundColor3 = Color3.new(1, 1, 1)
+       diamond.BorderSizePixel = 0
+       diamond.Visible = false
+       diamond.Parent = row
+
+       -- Icon
+       local icon = Instance.new("Frame")
+       icon.Size = UDim2.new(0, 14, 0, 14)
+       icon.Position = UDim2.new(0, 24, 0.5, -7)
+       icon.BackgroundColor3 = Color3.fromRGB(0, 150, 255)
+       icon.BorderSizePixel = 0
+       icon.Parent = row
+       Instance.new("UICorner", icon).CornerRadius = UDim.new(0, 2)
+
+       -- Label
+       local lbl = Instance.new("TextLabel")
+       lbl.Size = UDim2.new(0, 180, 1, 0)
+       lbl.Position = UDim2.new(0, 50, 0, 0)
+       lbl.BackgroundTransparency = 1
+       lbl.TextColor3 = Color3.new(0.8, 0.8, 0.8)
+       lbl.Text = rowName
+       lbl.Font = Enum.Font.GothamMedium
+       lbl.TextSize = 13
+       lbl.TextXAlignment = Enum.TextXAlignment.Left
+       lbl.TextTruncate = Enum.TextTruncate.AtEnd
+       lbl.Parent = row
+
+       -- Top line
+       local topLine = Instance.new("Frame")
+       topLine.Size = UDim2.new(0, 0, 0, 2)
+       topLine.BackgroundColor3 = Color3.new(1, 1, 1)
+       topLine.BorderSizePixel = 0
+       topLine.Parent = row
+
+       -- Bottom line
+       local botLine = Instance.new("Frame")
+       botLine.Size = UDim2.new(0, 0, 0, 2)
+       botLine.Position = UDim2.new(0, 0, 1, -2)
+       botLine.BackgroundColor3 = Color3.new(1, 1, 1)
+       botLine.BorderSizePixel = 0
+       botLine.Parent = row
+
+       -- Reset button (rightmost)
+       local resetBg = Instance.new("TextButton")
+       resetBg.Size = UDim2.new(0, 45, 0, 22)
+       resetBg.Position = UDim2.new(1, -55, 0.5, -11)
+       resetBg.BackgroundColor3 = Color3.fromRGB(50, 30, 30)
+       resetBg.BorderSizePixel = 0
+       resetBg.Text = "Reset"
+       resetBg.TextColor3 = Color3.fromRGB(255, 120, 120)
+       resetBg.Font = Enum.Font.GothamMedium
+       resetBg.TextSize = 10
+       resetBg.AutoButtonColor = false
+       resetBg.ZIndex = 3
+       resetBg.Parent = row
+       Instance.new("UICorner", resetBg).CornerRadius = UDim.new(0, 4)
+       _applySoundsToButton(resetBg)
+
+       -- Keybind display button
+       local keybindBg = Instance.new("Frame")
+       keybindBg.Size = UDim2.new(0, 75, 0, 22)
+       keybindBg.Position = UDim2.new(1, -140, 0.5, -11)
+       keybindBg.BackgroundColor3 = Color3.fromRGB(35, 35, 35)
+       keybindBg.BorderSizePixel = 1
+       keybindBg.BorderColor3 = Color3.fromRGB(60, 60, 60)
+       keybindBg.Parent = row
+       Instance.new("UICorner", keybindBg).CornerRadius = UDim.new(0, 4)
+
+       local keybindLabel = Instance.new("TextLabel")
+       keybindLabel.Size = UDim2.new(1, 0, 1, 0)
+       keybindLabel.BackgroundTransparency = 1
+       keybindLabel.TextColor3 = Color3.new(1, 1, 1)
+       keybindLabel.Text = getKeyDisplayName(S.keybinds[rowName])
+       keybindLabel.Font = Enum.Font.GothamMedium
+       keybindLabel.TextSize = 11
+       keybindLabel.Parent = keybindBg
+
+       local keybindBtn = Instance.new("TextButton")
+       keybindBtn.Size = UDim2.new(1, 0, 1, 0)
+       keybindBtn.BackgroundTransparency = 1
+       keybindBtn.Text = ""
+       keybindBtn.ZIndex = 3
+       keybindBtn.Parent = keybindBg
+       _applySoundsToButton(keybindBtn)
+
+       -- Hover effects
+       row.MouseEnter:Connect(function()
+           _playSound(_HOVER_SOUND)
+           _TweenService:Create(row, TweenInfo.new(0.2), {BackgroundColor3 = Color3.fromRGB(35, 35, 35)}):Play()
+           _TweenService:Create(icon, TweenInfo.new(0.2), {BackgroundColor3 = Color3.new(1, 1, 1)}):Play()
+           _TweenService:Create(lbl, TweenInfo.new(0.2), {TextColor3 = Color3.new(1, 1, 1)}):Play()
+           local tI = TweenInfo.new(0.35, Enum.EasingStyle.Quint, Enum.EasingDirection.Out)
+           _TweenService:Create(topLine, tI, {Size = UDim2.new(1, 0, 0, 2)}):Play()
+           _TweenService:Create(botLine, tI, {Size = UDim2.new(1, 0, 0, 2)}):Play()
+           diamond.Visible = true
+       end)
+       row.MouseLeave:Connect(function()
+           _TweenService:Create(row, TweenInfo.new(0.2), {BackgroundColor3 = Color3.fromRGB(24, 24, 24)}):Play()
+           _TweenService:Create(icon, TweenInfo.new(0.2), {BackgroundColor3 = Color3.fromRGB(0, 150, 255)}):Play()
+           _TweenService:Create(lbl, TweenInfo.new(0.2), {TextColor3 = Color3.new(0.8, 0.8, 0.8)}):Play()
+           local tI = TweenInfo.new(0.35, Enum.EasingStyle.Quint, Enum.EasingDirection.Out)
+           _TweenService:Create(topLine, tI, {Size = UDim2.new(0, 0, 0, 2)}):Play()
+           _TweenService:Create(botLine, tI, {Size = UDim2.new(0, 0, 0, 2)}):Play()
+           diamond.Visible = false
+       end)
+
+       -- Reset hover
+       resetBg.MouseEnter:Connect(function()
+           _TweenService:Create(resetBg, TweenInfo.new(0.2), {BackgroundColor3 = Color3.fromRGB(80, 30, 30)}):Play()
+       end)
+       resetBg.MouseLeave:Connect(function()
+           _TweenService:Create(resetBg, TweenInfo.new(0.2), {BackgroundColor3 = Color3.fromRGB(50, 30, 30)}):Play()
+       end)
+
+       -- Store row data
+       local rowData = {
+           registryName = rowName,
+           row = row,
+           keybindLabel = keybindLabel,
+           keybindBtn = keybindBtn,
+           keybindBg = keybindBg,
+           resetBtn = resetBg,
+           regEntry = regEntry,
+       }
+       _keybindRows[rowName] = rowData
+
+       -- Keybind button click: start listening
+       keybindBtn.MouseButton1Click:Connect(function()
+           _createParticleBurst(keybindBg)
+           -- If already listening on this button, cancel
+           if _keybindListening and _keybindListeningBtn == keybindBtn then
+               stopKeybindListening()
+               return
+           end
+           -- If listening on another button, stop that first
+           if _keybindListening then
+               stopKeybindListening()
+           end
+           _keybindListening = true
+           _keybindListeningBtn = keybindBtn
+           keybindLabel.Text = ". . ."
+           keybindBg.BorderColor3 = Color3.fromRGB(0, 150, 255)
+           keybindLabel.TextColor3 = Color3.fromRGB(0, 200, 255)
+           spawnNotification("Press Esc or Backspace to cancel", "info")
+
+           _keybindListenConn = _UserInputService.InputBegan:Connect(function(input, gameProcessed)
+               if not _keybindListening then return end
+               if input.UserInputType == Enum.UserInputType.Keyboard then
+                   if input.KeyCode == Enum.KeyCode.Escape or input.KeyCode == Enum.KeyCode.Backspace then
+                       -- Cancel
+                       stopKeybindListening()
+                       return
+                   end
+                   if input.KeyCode ~= Enum.KeyCode.Unknown then
+                       -- Assign keybind
+                       S.keybinds[rowName] = input.KeyCode
+                       keybindLabel.Text = input.KeyCode.Name
+                       keybindBg.BorderColor3 = Color3.fromRGB(60, 60, 60)
+                       keybindLabel.TextColor3 = Color3.new(1, 1, 1)
+                       _keybindListening = false
+                       if _keybindListenConn then _keybindListenConn:Disconnect() _keybindListenConn = nil end
+                       _keybindListeningBtn = nil
+                       spawnNotification(rowName .. " has been keybinded to " .. input.KeyCode.Name, "success")
+                   end
+               end
+           end)
+       end)
+
+       -- Reset button click: clear keybind
+       resetBg.MouseButton1Click:Connect(function()
+           _createParticleBurst(resetBg)
+           if _keybindListening and _keybindListeningBtn == keybindBtn then
+               stopKeybindListening()
+           end
+           S.keybinds[rowName] = nil
+           keybindLabel.Text = "None"
+           keybindBg.BorderColor3 = Color3.fromRGB(60, 60, 60)
+           keybindLabel.TextColor3 = Color3.new(1, 1, 1)
+       end)
+
+       return row
+   end
+
+   -- Helper: create a section header label
+   local function createKeybindSectionHeader(text, parentList)
+       local header = Instance.new("TextLabel")
+       header.Size = UDim2.new(1, 0, 0, 28)
+       header.BackgroundColor3 = Color3.fromRGB(18, 18, 18)
+       header.BorderSizePixel = 0
+       header.TextColor3 = Color3.fromRGB(0, 150, 255)
+       header.Text = "  " .. text
+       header.Font = Enum.Font.GothamBold
+       header.TextSize = 13
+       header.TextXAlignment = Enum.TextXAlignment.Left
+       header.LayoutOrder = nextKbOrder()
+       header.Parent = parentList
+       Instance.new("UICorner", header).CornerRadius = UDim.new(0, 4)
+       return header
+   end
+
+   -- Build sections for each tab
+   local allKbElements = {} -- track all keybind UI elements for search filtering
+
+   -- Regular tabs (non-autofarm)
+   for _, tabName in ipairs(kbTabOrder) do
+       local tabEntries = {}
+       for _, regEntry in ipairs(_buttonRegistry) do
+           if regEntry.tab == tabName and regEntry.type ~= "slider" then
+               table.insert(tabEntries, regEntry)
+           end
+       end
+       if #tabEntries > 0 then
+           local header = createKeybindSectionHeader(tabName, elementsList)
+           table.insert(allKbElements, {element = header, names = {}})
+           for _, regEntry in ipairs(tabEntries) do
+               local row = createKeybindRow(regEntry, elementsList)
+               table.insert(allKbElements, {element = row, names = {regEntry.name:lower()}})
+           end
+       end
+   end
+
+   -- AUTOFARM tab with sub-sections
+   local autofarmHeader = createKeybindSectionHeader("AUTOFARM", elementsList)
+   table.insert(allKbElements, {element = autofarmHeader, names = {}})
+
+   -- Gather all autofarm entries
+   local allAutofarmEntries = {}
+   for _, regEntry in ipairs(_buttonRegistry) do
+       if regEntry.tab == "AUTOFARM" and regEntry.type ~= "slider" then
+           table.insert(allAutofarmEntries, regEntry)
+       end
+   end
+
+   -- Track which entries have been placed in a sub-section
+   local placedAutofarm = {}
+
+   for _, subSection in ipairs(kbAutofarmSections) do
+       local subEntries = {}
+       for _, regEntry in ipairs(allAutofarmEntries) do
+           if subSection.filter(regEntry) and not placedAutofarm[regEntry.name] then
+               table.insert(subEntries, regEntry)
+               placedAutofarm[regEntry.name] = true
+           end
+       end
+       if #subEntries > 0 then
+           -- Sub-section header (slightly different style)
+           local subHeader = Instance.new("TextLabel")
+           subHeader.Size = UDim2.new(1, 0, 0, 24)
+           subHeader.BackgroundColor3 = Color3.fromRGB(20, 20, 20)
+           subHeader.BorderSizePixel = 0
+           subHeader.TextColor3 = Color3.fromRGB(180, 180, 180)
+           subHeader.Text = "    " .. subSection.name
+           subHeader.Font = Enum.Font.GothamMedium
+           subHeader.TextSize = 11
+           subHeader.TextXAlignment = Enum.TextXAlignment.Left
+           subHeader.LayoutOrder = nextKbOrder()
+           subHeader.Parent = elementsList
+           Instance.new("UICorner", subHeader).CornerRadius = UDim.new(0, 4)
+           table.insert(allKbElements, {element = subHeader, names = {}})
+
+           for _, regEntry in ipairs(subEntries) do
+               local row = createKeybindRow(regEntry, elementsList)
+               table.insert(allKbElements, {element = row, names = {regEntry.name:lower()}})
+           end
+       end
+   end
+
+   -- Any remaining autofarm entries that didn't match a sub-section
+   for _, regEntry in ipairs(allAutofarmEntries) do
+       if not placedAutofarm[regEntry.name] then
+           local row = createKeybindRow(regEntry, elementsList)
+           table.insert(allKbElements, {element = row, names = {regEntry.name:lower()}})
+           placedAutofarm[regEntry.name] = true
+       end
+   end
+
+   -- SETTINGS tab entries (non-slider, non-special)
+   local settingsEntries = {}
+   for _, regEntry in ipairs(_buttonRegistry) do
+       if regEntry.tab == "SETTINGS" and regEntry.type ~= "slider" then
+           table.insert(settingsEntries, regEntry)
+       end
+   end
+   if #settingsEntries > 0 then
+       local header = createKeybindSectionHeader("SETTINGS", elementsList)
+       table.insert(allKbElements, {element = header, names = {}})
+       for _, regEntry in ipairs(settingsEntries) do
+           local row = createKeybindRow(regEntry, elementsList)
+           table.insert(allKbElements, {element = row, names = {regEntry.name:lower()}})
+       end
+   end
+
+   -- Search filtering
+   kbSearchBox:GetPropertyChangedSignal("Text"):Connect(function()
+       local query = kbSearchBox.Text:lower()
+       if query == "" then
+           -- Show all
+           for _, item in ipairs(allKbElements) do
+               item.element.Visible = true
+           end
+           return
+       end
+       -- Hide headers by default, show only matching rows
+       -- Also show a header if any row in its section matches
+       local currentHeader = nil
+       local headerHasMatch = false
+       for _, item in ipairs(allKbElements) do
+           if #item.names == 0 then
+               -- This is a header/sub-header
+               -- First, finalize previous header visibility
+               if currentHeader then
+                   currentHeader.Visible = headerHasMatch
+               end
+               currentHeader = item.element
+               headerHasMatch = false
+           else
+               -- This is a keybind row
+               local matches = false
+               for _, n in ipairs(item.names) do
+                   if n:find(query, 1, true) then
+                       matches = true
+                       break
+                   end
+               end
+               item.element.Visible = matches
+               if matches then headerHasMatch = true end
+           end
+       end
+       -- Finalize last header
+       if currentHeader then
+           currentHeader.Visible = headerHasMatch
+       end
+   end)
+
+   -- Sync keybind labels when config is loaded
+   table.insert(_allToggleSyncs, function()
+       for name, rowData in pairs(_keybindRows) do
+           rowData.keybindLabel.Text = getKeyDisplayName(S.keybinds[name])
+       end
+   end)
+end
+-- ======= KEYBIND EXECUTION HANDLER ======= --
+-- When a bound key is pressed, trigger the corresponding button action
+do
+   _UserInputService.InputBegan:Connect(function(input, gameProcessed)
+       if gameProcessed then return end
+       if input.UserInputType ~= Enum.UserInputType.Keyboard then return end
+       local keyCode = input.KeyCode
+       if keyCode == Enum.KeyCode.Unknown then return end
+       for buttonName, boundKey in pairs(S.keybinds) do
+           if boundKey == keyCode then
+               -- Find the registry entry and trigger its action
+               for _, regEntry in ipairs(_buttonRegistry) do
+                   if regEntry.name == buttonName then
+                       if regEntry.type == "toggle" and regEntry.onClickFn then
+                           regEntry.onClickFn()
+                           -- Sync toggle visuals
+                           for _, syncFn in ipairs(_allToggleSyncs) do
+                               pcall(syncFn)
+                           end
+                       elseif regEntry.type == "button" and regEntry.onClickFn then
+                           regEntry.onClickFn()
+                       elseif regEntry.type == "special" and regEntry.onClickFn then
+                           regEntry.onClickFn()
+                       end
+                       break
+                   end
+               end
+           end
+       end
+   end)
+end
 _currentRegistryTab = nil
 -- ======= CREATOR MODE SYSTEM ======= --
 do
@@ -7292,9 +8117,9 @@ do
    local _rowDragHoldThreshold = 0.3
    local setupRowDrag
    -- Initialize sidebar entries from existing tabs
-   local tabOrder = {"Search", "WEAPONS", "PLAYER", "VISUALS", "GAME", "AUTOFARM", "SETTINGS"}
-   local tabBtns = {tab1Btn, tab2Btn, tab3Btn, tab4Btn, tab5Btn, tab6Btn, tab7Btn}
-   local tabTitles = {tabTitle1, tabTitle2, tabTitle3, tabTitle4, tabTitle5, tabTitle6, tabTitle7}
+   local tabOrder = {"Search", "WEAPONS", "PLAYER", "VISUALS", "GAME", "AUTOFARM", "SETTINGS", "KEYBINDS"}
+   local tabBtns = {tab1Btn, tab2Btn, tab3Btn, tab4Btn, tab5Btn, tab6Btn, tab7Btn, tab8Btn}
+   local tabTitles = {tabTitle1, tabTitle2, tabTitle3, tabTitle4, tabTitle5, tabTitle6, tabTitle7, tabTitle8}
    for i, name in ipairs(tabOrder) do
        table.insert(_sidebarEntries, {
            name = name,
@@ -7931,6 +8756,10 @@ end)
 tab7Btn.MouseButton1Click:Connect(function()
    switchTab("SETTINGS")
    task.spawn(function() _animateTabTitle(tabTitle7, "SETTINGS") end)
+end)
+tab8Btn.MouseButton1Click:Connect(function()
+   switchTab("KEYBINDS")
+   task.spawn(function() _animateTabTitle(tabTitle8, "KEYBINDS") end)
 end)
 -- ======= HUB DRAGGING ======= --
 do
