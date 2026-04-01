@@ -5694,18 +5694,17 @@ do
            local bestNpc = nil
            local bestNpcPart = nil
            local bestNpcDist = math.huge
-           -- Check priority eggs in Undead folder
+           -- Check priority eggs in Undead folder (dynamically find all models ending in " Egg")
            local undead = unbreakable:FindFirstChild("Undead")
            if undead then
-               for _, eggName in ipairs({"Blue Egg", "Pink Egg", "Yellow Egg", "Green Egg"}) do
-                   local egg = undead:FindFirstChild(eggName)
-                   if egg and egg:IsA("Model") then
-                       local hum = egg:FindFirstChildOfClass("Humanoid")
+               for _, child in pairs(undead:GetChildren()) do
+                   if child:IsA("Model") and child.Name:match(" Egg$") then
+                       local hum = child:FindFirstChildOfClass("Humanoid")
                        if hum and hum.Health > 0 then
-                           local part = egg.PrimaryPart
+                           local part = child.PrimaryPart
                            if not part then
                                for _, pn in ipairs({"HumanoidRootPart", "Torso", "LowerTorso", "UpperTorso", "Head"}) do
-                                   local f = egg:FindFirstChild(pn)
+                                   local f = child:FindFirstChild(pn)
                                    if f and f:IsA("BasePart") then part = f break end
                                end
                            end
@@ -5713,7 +5712,7 @@ do
                                local dist = (root.Position - part.Position).Magnitude
                                if dist < bestEggDist then
                                    bestEggDist = dist
-                                   bestEgg = egg
+                                   bestEgg = child
                                    bestEggPart = part
                                end
                            end
@@ -5721,10 +5720,26 @@ do
                    end
                end
            end
-           -- Check non-priority easter NPCs in Characters folders (Human, Orc, Undead)
+           -- Check non-priority easter NPCs in Characters folders (OPPOSITE team only)
            local chars = unbreakable:FindFirstChild("Characters")
            if chars then
-               for _, teamName in ipairs({"Human", "Orc", "Undead"}) do
+               local enemyTeams = {}
+               local playerTeam = _Players.LocalPlayer.Team
+               if playerTeam then
+                   local tName = playerTeam.Name:lower()
+                   if tName:find("human") then
+                       table.insert(enemyTeams, "Orc")
+                       table.insert(enemyTeams, "Undead")
+                   elseif tName:find("orc") then
+                       table.insert(enemyTeams, "Human")
+                       table.insert(enemyTeams, "Undead")
+                   else
+                       enemyTeams = {"Human", "Orc", "Undead"}
+                   end
+               else
+                   enemyTeams = {"Human", "Orc", "Undead"}
+               end
+               for _, teamName in ipairs(enemyTeams) do
                    local teamFolder = chars:FindFirstChild(teamName)
                    if teamFolder then
                        for _, npcName in ipairs({"Carrot Menace", "Bunny", "Easter Guardian"}) do
@@ -6863,11 +6878,11 @@ do
            -- Misc
            autoEternalFireEnabled = S.autoEternalFireEnabled,
        }
-       -- Serialize keybinds: store as "KEYBINDS:buttonName=KeyCodeName" entries
+       -- Serialize keybinds: store as "buttonName=KeyCodeName" entries separated by |
        local kbParts = {}
        for btnName, keyCode in pairs(S.keybinds) do
            if keyCode and typeof(keyCode) == "EnumItem" then
-               table.insert(kbParts, btnName .. ":" .. keyCode.Name)
+               table.insert(kbParts, btnName .. "=" .. keyCode.Name)
            end
        end
        vals._keybinds = table.concat(kbParts, "|")
@@ -6966,8 +6981,13 @@ do
            if cfg._keybinds ~= nil and type(cfg._keybinds) == "string" and cfg._keybinds ~= "" then
                S.keybinds = {}
                for entry in cfg._keybinds:gmatch("[^|]+") do
-                   local btnName, keyName = entry:match("^(.+):([^:]+)$")
+                   -- Try new format first (btnName=KeyCode), then legacy format (btnName:KeyCode)
+                   local btnName, keyName = entry:match("^(.+)=([^=]+)$")
+                   if not btnName then
+                       btnName, keyName = entry:match("^(.+):([^:]+)$")
+                   end
                    if btnName and keyName then
+                       keyName = keyName:gsub("%s+$", ""):gsub("\r", "") -- strip trailing whitespace/CR
                        local ok, kc = pcall(function() return Enum.KeyCode[keyName] end)
                        if ok and kc then
                            S.keybinds[btnName] = kc
@@ -7478,7 +7498,7 @@ do
            if S.selectedConfigName then
                resetAllToggles()
                loadConfig(S.selectedConfigName)
-               for _, syncFn in ipairs(_allToggleSyncs) do syncFn() end
+               for _, syncFn in ipairs(_allToggleSyncs) do pcall(syncFn) end
                for _, syncFn in ipairs(_allSliderSyncs) do pcall(syncFn) end
                for _, syncFn in ipairs(_allDropdownSyncs) do pcall(syncFn) end
            else
@@ -7713,9 +7733,10 @@ do
 
    local function createKeybindRow(regEntry, parentList)
        local rowName = regEntry.name
+       local rowKey = regEntry.tab .. ":" .. regEntry.name -- unique key for keybinds (handles duplicate names across tabs)
        -- Main row frame
        local row = Instance.new("TextButton")
-       row.Name = "KB_" .. rowName
+       row.Name = "KB_" .. rowKey
        row.Size = UDim2.new(1, 0, 0, 38)
        row.BackgroundColor3 = Color3.fromRGB(24, 24, 24)
        row.BorderSizePixel = 0
@@ -7802,7 +7823,7 @@ do
        keybindLabel.Size = UDim2.new(1, 0, 1, 0)
        keybindLabel.BackgroundTransparency = 1
        keybindLabel.TextColor3 = Color3.new(1, 1, 1)
-       keybindLabel.Text = getKeyDisplayName(S.keybinds[rowName])
+       keybindLabel.Text = getKeyDisplayName(S.keybinds[rowKey])
        keybindLabel.Font = Enum.Font.GothamMedium
        keybindLabel.TextSize = 11
        keybindLabel.Parent = keybindBg
@@ -7846,7 +7867,8 @@ do
 
        -- Store row data
        local rowData = {
-           registryName = rowName,
+           registryName = rowKey,
+           displayName = rowName,
            row = row,
            keybindLabel = keybindLabel,
            keybindBtn = keybindBtn,
@@ -7854,7 +7876,7 @@ do
            resetBtn = resetBg,
            regEntry = regEntry,
        }
-       _keybindRows[rowName] = rowData
+       _keybindRows[rowKey] = rowData
 
        -- Keybind button click: start listening
        keybindBtn.MouseButton1Click:Connect(function()
@@ -7885,7 +7907,7 @@ do
                    end
                    if input.KeyCode ~= Enum.KeyCode.Unknown then
                        -- Assign keybind
-                       S.keybinds[rowName] = input.KeyCode
+                       S.keybinds[rowKey] = input.KeyCode
                        keybindLabel.Text = input.KeyCode.Name
                        keybindBg.BorderColor3 = Color3.fromRGB(60, 60, 60)
                        keybindLabel.TextColor3 = Color3.new(1, 1, 1)
@@ -7904,7 +7926,7 @@ do
            if _keybindListening and _keybindListeningBtn == keybindBtn then
                stopKeybindListening()
            end
-           S.keybinds[rowName] = nil
+           S.keybinds[rowKey] = nil
            keybindLabel.Text = "None"
            keybindBg.BorderColor3 = Color3.fromRGB(60, 60, 60)
            keybindLabel.TextColor3 = Color3.new(1, 1, 1)
@@ -8079,23 +8101,26 @@ do
        if input.UserInputType ~= Enum.UserInputType.Keyboard then return end
        local keyCode = input.KeyCode
        if keyCode == Enum.KeyCode.Unknown then return end
-       for buttonName, boundKey in pairs(S.keybinds) do
+       for bindKey, boundKey in pairs(S.keybinds) do
            if boundKey == keyCode then
-               -- Find the registry entry and trigger its action
-               for _, regEntry in ipairs(_buttonRegistry) do
-                   if regEntry.name == buttonName then
-                       if regEntry.type == "toggle" and regEntry.onClickFn then
-                           regEntry.onClickFn()
-                           -- Sync toggle visuals
-                           for _, syncFn in ipairs(_allToggleSyncs) do
-                               pcall(syncFn)
+               -- Parse tab:name format to find the correct registry entry
+               local bindTab, bindName = bindKey:match("^(.+):(.+)$")
+               if bindTab and bindName then
+                   for _, regEntry in ipairs(_buttonRegistry) do
+                       if regEntry.name == bindName and regEntry.tab == bindTab then
+                           if regEntry.type == "toggle" and regEntry.onClickFn then
+                               regEntry.onClickFn()
+                               -- Sync toggle visuals
+                               for _, syncFn in ipairs(_allToggleSyncs) do
+                                   pcall(syncFn)
+                               end
+                           elseif regEntry.type == "button" and regEntry.onClickFn then
+                               regEntry.onClickFn()
+                           elseif regEntry.type == "special" and regEntry.onClickFn then
+                               regEntry.onClickFn()
                            end
-                       elseif regEntry.type == "button" and regEntry.onClickFn then
-                           regEntry.onClickFn()
-                       elseif regEntry.type == "special" and regEntry.onClickFn then
-                           regEntry.onClickFn()
+                           break
                        end
-                       break
                    end
                end
            end
