@@ -336,118 +336,40 @@ local DEFAULTS = {
     },
 }
 
-local S = {
-    notificationsEnabled = DEFAULTS.notificationsEnabled,
-    fpsPingStatsEnabled = DEFAULTS.fpsPingStatsEnabled,
-    customCursorEnabled = DEFAULTS.customCursorEnabled,
-    guiTransparency = DEFAULTS.guiTransparency,
-    demoToggle = DEFAULTS.demoToggle,
-    demoSlider = DEFAULTS.demoSlider,
-    demoDropdown = DEFAULTS.demoDropdown,
-    demoInput = DEFAULTS.demoInput,
-    dynamiteTpEnabled = DEFAULTS.dynamiteTpEnabled,
-    dynamiteStyle = DEFAULTS.dynamiteStyle,
-    dynamiteTarget = DEFAULTS.dynamiteTarget,
-    dynamiteSpectateEnabled = DEFAULTS.dynamiteSpectateEnabled,
-    dynamiteMarkPlayersEnabled = DEFAULTS.dynamiteMarkPlayersEnabled,
-    dynamiteSelectedPlayer = DEFAULTS.dynamiteSelectedPlayer,
-    infiniteStaminaEnabled = DEFAULTS.infiniteStaminaEnabled,
-    safeTeleportEnabled = DEFAULTS.safeTeleportEnabled,
-    noJumpCooldownEnabled = DEFAULTS.noJumpCooldownEnabled,
-    noFallDamageEnabled = DEFAULTS.noFallDamageEnabled,
-    noRagdollEnabled = DEFAULTS.noRagdollEnabled,
-    autoBreakFreeEnabled = DEFAULTS.autoBreakFreeEnabled,
-    autoGetUpEnabled = DEFAULTS.autoGetUpEnabled,
-    equipWhileSwimmingEnabled = DEFAULTS.equipWhileSwimmingEnabled,
-    silentAimEnabled = DEFAULTS.silentAimEnabled,
-    silentAimBodyTarget = DEFAULTS.silentAimBodyTarget,
-    silentAimMode = DEFAULTS.silentAimMode,
-    silentAimVisibilityCheck = DEFAULTS.silentAimVisibilityCheck,
-    silentAimTargetPriority = {
-        Players = DEFAULTS.silentAimTargetPriority.Players,
-        NPCs = DEFAULTS.silentAimTargetPriority.NPCs,
-        Entities = DEFAULTS.silentAimTargetPriority.Entities,
-    },
-    silentAimAccuracy = DEFAULTS.silentAimAccuracy,
-    silentAimDistanceLimit = DEFAULTS.silentAimDistanceLimit,
-    gunFovEnabled = DEFAULTS.gunFovEnabled,
-    gunFovShape = DEFAULTS.gunFovShape,
-    gunFovRadius = DEFAULTS.gunFovRadius,
-    gunSnaplineEnabled = DEFAULTS.gunSnaplineEnabled,
-    fastProjectileEnabled = DEFAULTS.fastProjectileEnabled,
-    wallBangEnabled = DEFAULTS.wallBangEnabled,
-    noSpreadEnabled = DEFAULTS.noSpreadEnabled,
-    noRecoilEnabled = DEFAULTS.noRecoilEnabled,
-    noFireCooldownEnabled = DEFAULTS.noFireCooldownEnabled,
-    fastReloadEnabled = DEFAULTS.fastReloadEnabled,
-    instantLassoChargeEnabled = DEFAULTS.instantLassoChargeEnabled,
-    lassoSilentAimEnabled = DEFAULTS.lassoSilentAimEnabled,
-    lassoSnaplineEnabled = DEFAULTS.lassoSnaplineEnabled,
-    lassoNoRopeLimitEnabled = DEFAULTS.lassoNoRopeLimitEnabled,
-    fasterLassoEnabled = DEFAULTS.fasterLassoEnabled,
-    playerEspEnabled = DEFAULTS.playerEspEnabled,
-    playerEspMethods = {
-        Text = DEFAULTS.playerEspMethods.Text,
-        Box = DEFAULTS.playerEspMethods.Box,
-        Tracer = DEFAULTS.playerEspMethods.Tracer,
-        Figure = DEFAULTS.playerEspMethods.Figure,
-    },
-    cameraNoclipEnabled = DEFAULTS.cameraNoclipEnabled,
-    staffNotifyEnabled = DEFAULTS.staffNotifyEnabled,
-    staffKickEnabled = DEFAULTS.staffKickEnabled,
-    pathSmartStaffDetectionEnabled = DEFAULTS.pathSmartStaffDetectionEnabled,
-    pathRecordNodeSpacing = DEFAULTS.pathRecordNodeSpacing,
-    pathRecordYOffset = DEFAULTS.pathRecordYOffset,
-    pathStayGroundedEnabled = DEFAULTS.pathStayGroundedEnabled,
-    pathPlayerAvoiderEnabled = DEFAULTS.pathPlayerAvoiderEnabled,
-    pathPlayerAvoiderDistance = DEFAULTS.pathPlayerAvoiderDistance,
-    pathPlayerAvoiderShowCorridor = DEFAULTS.pathPlayerAvoiderShowCorridor,
-    pathPlayerAvoiderMethod = DEFAULTS.pathPlayerAvoiderMethod,
-    pathPlayerAvoiderMethods = {
-        Corridor = DEFAULTS.pathPlayerAvoiderMethods.Corridor,
-        ["Radius Field"] = DEFAULTS.pathPlayerAvoiderMethods["Radius Field"],
-    },
-    pathPlayerAvoiderAction = DEFAULTS.pathPlayerAvoiderAction,
-    pathPlayerAvoiderRadius = DEFAULTS.pathPlayerAvoiderRadius,
-    pathPlayerAvoiderShowRadius = DEFAULTS.pathPlayerAvoiderShowRadius,
-    pathBearPreventionEnabled = DEFAULTS.pathBearPreventionEnabled,
-    pathHopOnDeathEnabled = DEFAULTS.pathHopOnDeathEnabled,
-    pathHopTimePassEnabled = DEFAULTS.pathHopTimePassEnabled,
-    pathHopTimePassMinutes = DEFAULTS.pathHopTimePassMinutes,
-    pathOrePurityHopEnabled = DEFAULTS.pathOrePurityHopEnabled,
-    pathOrePurityHopPercent = DEFAULTS.pathOrePurityHopPercent,
-    movementMode = DEFAULTS.movementMode,
-    tweenMoveSpeed = DEFAULTS.tweenMoveSpeed,
-    cframeFlyOffset = DEFAULTS.cframeFlyOffset,
-    cframeFlyAngle = DEFAULTS.cframeFlyAngle,
-    undergroundDepthOffset = DEFAULTS.undergroundDepthOffset,
-    undergroundRollFramePercent = DEFAULTS.undergroundRollFramePercent,
-    undergroundRollMode = DEFAULTS.undergroundRollMode,
-    undergroundRollTrack = DEFAULTS.undergroundRollTrack,
-    autoPickupWhitelistEnabled = DEFAULTS.autoPickupWhitelistEnabled,
-    selectedOreNames = {
-        Coal = DEFAULTS.selectedOreNames.Coal,
-    },
-    selectedPickupNames = {},
-    discordAutomineWebhookTrackingEnabled = DEFAULTS.discordAutomineWebhookTrackingEnabled,
-    discordAutomineWebhookUrl = DEFAULTS.discordAutomineWebhookUrl,
-    discordAutomineWebhookOptions = {
-        ["Track earnings"] = DEFAULTS.discordAutomineWebhookOptions["Track earnings"],
-        ["Track flags"] = DEFAULTS.discordAutomineWebhookOptions["Track flags"],
-        ["Track spawns"] = DEFAULTS.discordAutomineWebhookOptions["Track spawns"],
-    },
-    keybinds = {
+function automineCloneDefaultValue(value)
+    if type(value) ~= "table" then
+        return value
+    end
+
+    local cloned = {}
+    for key, child in pairs(value) do
+        cloned[key] = automineCloneDefaultValue(child)
+    end
+    return cloned
+end
+
+function automineCreateDefaultState()
+    local state = {}
+    for key, value in pairs(DEFAULTS) do
+        state[key] = automineCloneDefaultValue(value)
+    end
+    state.keybinds = {
         dynamiteMark = Enum.KeyCode.F,
-    },
-    -- Automine settings
-    autoPickupEnabled = DEFAULTS.autoPickupEnabled,
-    autoSellEnabled = DEFAULTS.autoSellEnabled,
-    autoSellThreshold = DEFAULTS.autoSellThreshold,
-    serverHopEnabled = DEFAULTS.serverHopEnabled,
-    mineAuraEnabled = DEFAULTS.mineAuraEnabled,
-    pickaxeProgressionEnabled = DEFAULTS.pickaxeProgressionEnabled,
-    miningPassiveProgressionEnabled = DEFAULTS.miningPassiveProgressionEnabled,
-}
+    }
+    return state
+end
+
+function automineCopyDefaultsIntoState(target)
+    for key in pairs(target) do
+        target[key] = nil
+    end
+    local freshState = automineCreateDefaultState()
+    for key, value in pairs(freshState) do
+        target[key] = value
+    end
+end
+
+local S = automineCreateDefaultState()
 
 local guiToggleKeyCode = Enum.KeyCode.E
 local guiToggleKeyName = "E"
@@ -1560,30 +1482,6 @@ if type(data.tweenMoveSpeed) == "number" then
     S.pickaxeProgressionEnabled = S.pickaxeProgressionEnabled == true
 
     return true
-end
-
-function automineCloneDefaultValue(value)
-    if type(value) ~= "table" then
-        return value
-    end
-
-    local cloned = {}
-    for key, child in pairs(value) do
-        cloned[key] = automineCloneDefaultValue(child)
-    end
-    return cloned
-end
-
-function automineCopyDefaultsIntoState(target)
-    for key in pairs(target) do
-        target[key] = nil
-    end
-    for key, value in pairs(DEFAULTS) do
-        target[key] = automineCloneDefaultValue(value)
-    end
-    target.keybinds = {
-        dynamiteMark = Enum.KeyCode.F,
-    }
 end
 
 local function resetStateToDefaults()
@@ -30905,58 +30803,39 @@ do
     applyEditorZ(pathUi.editorFrame, 220)
     attachFloatingDrag(pathUi.editorFrame, pathUi.editorDragHandle)
 
-    registerButtonEntry({
-        name = "Play Selected Path",
-        tab = "AUTOMINE",
-        type = "button",
-        onClickFn = function()
+    function registerAutomineLegacyButtonEntry(name, onClickFn)
+        registerButtonEntry({
+            name = name,
+            tab = "AUTOMINE",
+            type = "button",
+            onClickFn = onClickFn,
+        })
+    end
+
+    for _, entry in ipairs({
+        {"Play Selected Path", function()
             toggleAutoMineFromControl("keybind")
-        end,
-    })
-    registerButtonEntry({
-        name = "Auto Pickup",
-        tab = "AUTOMINE",
-        type = "button",
-        onClickFn = function()
+        end},
+        {"Auto Pickup", function()
             autoPickupEnabled = not autoPickupEnabled
             S.autoPickupEnabled = autoPickupEnabled
             setInteractKeyHeld(false)
             schedulePersist()
             refreshAutoPickupButton()
-        end,
-    })
-    registerButtonEntry({
-        name = "Pickup Whitelist",
-        tab = "AUTOMINE",
-        type = "button",
-        onClickFn = function()
+        end},
+        {"Pickup Whitelist", function()
             autoPickupWhitelistEnabled = not autoPickupWhitelistEnabled
             S.autoPickupWhitelistEnabled = autoPickupWhitelistEnabled
             schedulePersist()
             refreshPickupWhitelistDisplay()
-        end,
-    })
-    registerButtonEntry({
-        name = "Pickaxe Progression",
-        tab = "AUTOMINE",
-        type = "button",
-        onClickFn = function()
+        end},
+        {"Pickaxe Progression", function()
             setPickaxeProgressionEnabled(not (S.pickaxeProgressionEnabled == true))
-        end,
-    })
-    registerButtonEntry({
-        name = "Claim Gem Luck",
-        tab = "AUTOMINE",
-        type = "button",
-        onClickFn = function()
+        end},
+        {"Claim Gem Luck", function()
             setMiningPassiveProgressionEnabled(not (S.miningPassiveProgressionEnabled == true))
-        end,
-    })
-    registerButtonEntry({
-        name = "Path Server Hop",
-        tab = "AUTOMINE",
-        type = "button",
-        onClickFn = function()
+        end},
+        {"Path Server Hop", function()
             if serverHopInProgress then
                 return
             end
@@ -30971,13 +30850,8 @@ do
             schedulePersist()
             savePathsToStorage(false)
             refreshServerHopDisplay()
-        end,
-    })
-    registerButtonEntry({
-        name = "Record Path",
-        tab = "AUTOMINE",
-        type = "button",
-        onClickFn = function()
+        end},
+        {"Record Path", function()
             if pathState.editorVisible and not pathState.editingSavedPath then
                 closePathEditor()
             else
@@ -30985,47 +30859,39 @@ do
                 refreshPathEditorButtons()
                 refreshPathManagerButtons()
             end
-        end,
-    })
-    registerButtonEntry({
-        name = "Play Path",
-        tab = "AUTOMINE",
-        type = "button",
-        onClickFn = function()
+        end},
+        {"Play Path", function()
             togglePathLoopFromControl("keybind")
-        end,
-    })
-    registerButtonEntry({
-        name = "Always Play Path",
-        tab = "AUTOMINE",
-        type = "button",
-        onClickFn = function()
+        end},
+        {"Always Play Path", function()
             local playableSlotIndex = getPathSequenceStartSlotIndex()
             if not playableSlotIndex then
                 return
             end
             setPathSequenceStartSlotIndex(playableSlotIndex)
             setFocusedPathSlotIndex(playableSlotIndex, true)
-	pathState.alwaysPlayEnabled = not pathState.alwaysPlayEnabled
-	if pathState.alwaysPlayEnabled and not autoMineEnabled then
-		activeFarmMode = "path"
-		local ok, started = xpcall(function()
-			return startPathPlaybackForSlot(playableSlotIndex, "alwaysplay")
-		end, debug.traceback)
-		if not ok then
-			autoMineEnabled = false
-			activeFarmMode = nil
-			setStatus("Path start failed", Color3.fromRGB(255, 130, 130))
-			pushDebug(started)
-		elseif not started then
-			autoMineEnabled = false
-			activeFarmMode = nil
-		end
-	end
+            pathState.alwaysPlayEnabled = not pathState.alwaysPlayEnabled
+            if pathState.alwaysPlayEnabled and not autoMineEnabled then
+                activeFarmMode = "path"
+                local ok, started = xpcall(function()
+                    return startPathPlaybackForSlot(playableSlotIndex, "alwaysplay")
+                end, debug.traceback)
+                if not ok then
+                    autoMineEnabled = false
+                    activeFarmMode = nil
+                    setStatus("Path start failed", Color3.fromRGB(255, 130, 130))
+                    pushDebug(started)
+                elseif not started then
+                    autoMineEnabled = false
+                    activeFarmMode = nil
+                end
+            end
             savePathsToStorage(true)
             refreshPathManagerButtons()
-        end,
-    })
+        end},
+    }) do
+        registerAutomineLegacyButtonEntry(entry[1], entry[2])
+    end
 
     for _, oreOption in ipairs(ORE_OPTIONS) do
         local oreButton = oreOptionButtons[oreOption.id]
@@ -31366,6 +31232,18 @@ do
         pathUi.pathRowsLayout.SortOrder = Enum.SortOrder.LayoutOrder
         pathUi.pathRowsLayout.Parent = pathUi.pathRowsPage
 
+        function createHiddenAutomineRowsContainer(name, parent, orderFn)
+            local container = type(orderFn) == "function" and orderFn(Instance.new("Frame")) or Instance.new("Frame")
+            container.Name = name
+            container.Size = UDim2.new(1, 0, 0, 0)
+            container.BackgroundTransparency = 1
+            container.BorderSizePixel = 0
+            container.ClipsDescendants = true
+            container.Visible = false
+            container.Parent = parent
+            return container
+        end
+
         _, pathUi.movementModeSync = createDropdownRow(
             "Movement Type",
             pathUi.mainRowsPage,
@@ -31380,14 +31258,7 @@ do
                 refreshTweenButton()
             end
         )
-        pathUi.movementSpeedContainer = nextCustomOrder(Instance.new("Frame"))
-        pathUi.movementSpeedContainer.Name = "MovementSpeedContainer"
-        pathUi.movementSpeedContainer.Size = UDim2.new(1, 0, 0, 0)
-        pathUi.movementSpeedContainer.BackgroundTransparency = 1
-        pathUi.movementSpeedContainer.BorderSizePixel = 0
-        pathUi.movementSpeedContainer.ClipsDescendants = true
-        pathUi.movementSpeedContainer.Visible = false
-        pathUi.movementSpeedContainer.Parent = pathUi.mainRowsPage
+        pathUi.movementSpeedContainer = createHiddenAutomineRowsContainer("MovementSpeedContainer", pathUi.mainRowsPage, nextCustomOrder)
 
         pathUi.movementSpeedRow, pathUi.movementSpeedUpdate, _, pathUi.movementSpeedLabel = createSliderRow(
             "Tween Speed",
@@ -31417,14 +31288,7 @@ do
         )
         pathUi.movementSpeedRow.Visible = true
 
-        pathUi.cframeFlyOffsetContainer = nextCustomOrder(Instance.new("Frame"))
-        pathUi.cframeFlyOffsetContainer.Name = "CFrameFlyOffsetContainer"
-        pathUi.cframeFlyOffsetContainer.Size = UDim2.new(1, 0, 0, 0)
-        pathUi.cframeFlyOffsetContainer.BackgroundTransparency = 1
-        pathUi.cframeFlyOffsetContainer.BorderSizePixel = 0
-        pathUi.cframeFlyOffsetContainer.ClipsDescendants = true
-        pathUi.cframeFlyOffsetContainer.Visible = false
-        pathUi.cframeFlyOffsetContainer.Parent = pathUi.mainRowsPage
+        pathUi.cframeFlyOffsetContainer = createHiddenAutomineRowsContainer("CFrameFlyOffsetContainer", pathUi.mainRowsPage, nextCustomOrder)
 
         pathUi.cframeFlyOffsetRow, pathUi.cframeFlyOffsetUpdate, _, pathUi.cframeFlyOffsetLabel = createSliderRow(
             "Fly Offset",
@@ -31445,14 +31309,7 @@ do
         )
         pathUi.cframeFlyOffsetRow.Visible = true
 
-        pathUi.cframeFlyAngleContainer = nextCustomOrder(Instance.new("Frame"))
-        pathUi.cframeFlyAngleContainer.Name = "CFrameFlyAngleContainer"
-        pathUi.cframeFlyAngleContainer.Size = UDim2.new(1, 0, 0, 0)
-        pathUi.cframeFlyAngleContainer.BackgroundTransparency = 1
-        pathUi.cframeFlyAngleContainer.BorderSizePixel = 0
-        pathUi.cframeFlyAngleContainer.ClipsDescendants = true
-        pathUi.cframeFlyAngleContainer.Visible = false
-        pathUi.cframeFlyAngleContainer.Parent = pathUi.mainRowsPage
+        pathUi.cframeFlyAngleContainer = createHiddenAutomineRowsContainer("CFrameFlyAngleContainer", pathUi.mainRowsPage, nextCustomOrder)
 
         pathUi.cframeFlyAngleRow, pathUi.cframeFlyAngleUpdate, _, pathUi.cframeFlyAngleLabel = createSliderRow(
             "Fly Angle",
@@ -31477,14 +31334,7 @@ do
         )
         pathUi.cframeFlyAngleRow.Visible = true
 
-        pathUi.undergroundDepthContainer = nextCustomOrder(Instance.new("Frame"))
-        pathUi.undergroundDepthContainer.Name = "UndergroundDepthContainer"
-        pathUi.undergroundDepthContainer.Size = UDim2.new(1, 0, 0, 0)
-        pathUi.undergroundDepthContainer.BackgroundTransparency = 1
-        pathUi.undergroundDepthContainer.BorderSizePixel = 0
-        pathUi.undergroundDepthContainer.ClipsDescendants = true
-        pathUi.undergroundDepthContainer.Visible = false
-        pathUi.undergroundDepthContainer.Parent = pathUi.mainRowsPage
+        pathUi.undergroundDepthContainer = createHiddenAutomineRowsContainer("UndergroundDepthContainer", pathUi.mainRowsPage, nextCustomOrder)
 
         pathUi.undergroundDepthRow, pathUi.undergroundDepthUpdate, _, pathUi.undergroundDepthLabel = createSliderRow(
             "Underground Depth",
@@ -31510,14 +31360,7 @@ do
         )
         pathUi.undergroundDepthRow.Visible = true
 
-        pathUi.undergroundFrameContainer = nextCustomOrder(Instance.new("Frame"))
-        pathUi.undergroundFrameContainer.Name = "UndergroundFrameContainer"
-        pathUi.undergroundFrameContainer.Size = UDim2.new(1, 0, 0, 0)
-        pathUi.undergroundFrameContainer.BackgroundTransparency = 1
-        pathUi.undergroundFrameContainer.BorderSizePixel = 0
-        pathUi.undergroundFrameContainer.ClipsDescendants = true
-        pathUi.undergroundFrameContainer.Visible = false
-        pathUi.undergroundFrameContainer.Parent = pathUi.mainRowsPage
+        pathUi.undergroundFrameContainer = createHiddenAutomineRowsContainer("UndergroundFrameContainer", pathUi.mainRowsPage, nextCustomOrder)
 
         pathUi.undergroundFrameRow, pathUi.undergroundFrameUpdate, _, pathUi.undergroundFrameLabel = createSliderRow(
             "Roll Frame %",
@@ -31541,14 +31384,7 @@ do
         )
         pathUi.undergroundFrameRow.Visible = true
 
-        pathUi.undergroundRollModeContainer = nextCustomOrder(Instance.new("Frame"))
-        pathUi.undergroundRollModeContainer.Name = "UndergroundRollModeContainer"
-        pathUi.undergroundRollModeContainer.Size = UDim2.new(1, 0, 0, 0)
-        pathUi.undergroundRollModeContainer.BackgroundTransparency = 1
-        pathUi.undergroundRollModeContainer.BorderSizePixel = 0
-        pathUi.undergroundRollModeContainer.ClipsDescendants = true
-        pathUi.undergroundRollModeContainer.Visible = false
-        pathUi.undergroundRollModeContainer.Parent = pathUi.mainRowsPage
+        pathUi.undergroundRollModeContainer = createHiddenAutomineRowsContainer("UndergroundRollModeContainer", pathUi.mainRowsPage, nextCustomOrder)
 
         _, pathUi.undergroundRollModeSync = createDropdownRow(
             "Roll Hold Method",
@@ -31564,14 +31400,7 @@ do
                 pushDebug("underground method: " .. getUndergroundRollMode())
             end
         )
-        pathUi.undergroundRollTrackContainer = nextCustomOrder(Instance.new("Frame"))
-        pathUi.undergroundRollTrackContainer.Name = "UndergroundRollTrackContainer"
-        pathUi.undergroundRollTrackContainer.Size = UDim2.new(1, 0, 0, 0)
-        pathUi.undergroundRollTrackContainer.BackgroundTransparency = 1
-        pathUi.undergroundRollTrackContainer.BorderSizePixel = 0
-        pathUi.undergroundRollTrackContainer.ClipsDescendants = true
-        pathUi.undergroundRollTrackContainer.Visible = false
-        pathUi.undergroundRollTrackContainer.Parent = pathUi.mainRowsPage
+        pathUi.undergroundRollTrackContainer = createHiddenAutomineRowsContainer("UndergroundRollTrackContainer", pathUi.mainRowsPage, nextCustomOrder)
 
         _, pathUi.undergroundRollTrackSync = createDropdownRow(
             "Roll Animation",
