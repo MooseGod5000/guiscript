@@ -11186,6 +11186,23 @@ function getFirstRemainingMineablePathOreNodeIndex(pathData)
 	return firstOreNodeIndex
 end
 
+function getFirstRecordedMineablePathOreNodeIndex(pathData)
+	if type(pathData) ~= "table" then
+		return nil
+	end
+
+	local nodeCount = #(pathData.nodes or {})
+	local firstOreNodeIndex = nil
+	for _, oreTarget in ipairs(pathData.ores or {}) do
+		local oreNodeIndex = normalizePathNodeIndex(oreTarget.nodeIndex, nodeCount)
+		if oreNodeIndex and not isPathNodeDisconnected(pathData, oreNodeIndex) and (not firstOreNodeIndex or oreNodeIndex < firstOreNodeIndex) then
+			firstOreNodeIndex = oreNodeIndex
+		end
+	end
+
+	return firstOreNodeIndex
+end
+
 function getClosestSafeEntryPlaybackPathNodeIndex(pathData, worldPosition, rejectedNodeIndexes)
 	if type(pathData) ~= "table" or typeof(worldPosition) ~= "Vector3" then
 		return nil, nil, nil
@@ -11197,19 +11214,39 @@ function getClosestSafeEntryPlaybackPathNodeIndex(pathData, worldPosition, rejec
 		return nil, nil, nil
 	end
 
-	local maxEntryNodeIndex = getFirstRemainingMineablePathOreNodeIndex(pathData) or nodeCount
+	local sellNodeIndex = getManualPathSellNodeIndex(pathData) or getPathSellNodeIndex(pathData)
+	local maxEntryNodeIndex = getFirstRemainingMineablePathOreNodeIndex(pathData)
+		or getFirstRecordedMineablePathOreNodeIndex(pathData)
+		or ((sellNodeIndex and sellNodeIndex > 1) and (sellNodeIndex - 1) or nodeCount)
 	maxEntryNodeIndex = math.clamp(math.floor(maxEntryNodeIndex), 1, nodeCount)
 	local bestNodeIndex = nil
 	local bestDistance = nil
 	for nodeIndex = 1, maxEntryNodeIndex do
 		local nodeRejected = type(rejectedNodeIndexes) == "table" and rejectedNodeIndexes[nodeIndex] == true
 			or isPathNodeDisconnected(pathData, nodeIndex)
+			or (sellNodeIndex ~= nil and nodeIndex == sellNodeIndex and nodeCount > 1)
 		local nodePosition = (not nodeRejected) and getPathNodePosition(nodes[nodeIndex]) or nil
 		if nodePosition then
 			local distance = (worldPosition - nodePosition).Magnitude
 			if not bestDistance or distance < bestDistance then
 				bestDistance = distance
 				bestNodeIndex = nodeIndex
+			end
+		end
+	end
+
+	if not bestNodeIndex and sellNodeIndex and sellNodeIndex > 1 then
+		maxEntryNodeIndex = math.clamp(sellNodeIndex - 1, 1, nodeCount)
+		for nodeIndex = 1, maxEntryNodeIndex do
+			local nodeRejected = type(rejectedNodeIndexes) == "table" and rejectedNodeIndexes[nodeIndex] == true
+				or isPathNodeDisconnected(pathData, nodeIndex)
+			local nodePosition = (not nodeRejected) and getPathNodePosition(nodes[nodeIndex]) or nil
+			if nodePosition then
+				local distance = (worldPosition - nodePosition).Magnitude
+				if not bestDistance or distance < bestDistance then
+					bestDistance = distance
+					bestNodeIndex = nodeIndex
+				end
 			end
 		end
 	end
