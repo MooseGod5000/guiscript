@@ -7688,10 +7688,15 @@ PATH_ALLOWED_SPAWN_ORDER = {
 	"HowlingPeak",
 	"Dorado",
 }
-PATH_ALLOWED_SPAWN_LOOKUP = {}
-for _, spawnName in ipairs(PATH_ALLOWED_SPAWN_ORDER) do
-	PATH_ALLOWED_SPAWN_LOOKUP[spawnName] = true
-end
+PATH_ALLOWED_SPAWN_LOOKUP = {
+	Bronze = true,
+	Delores = true,
+	Tribal = true,
+	WindmillCamp = true,
+	CanyonCamp = true,
+	HowlingPeak = true,
+	Dorado = true,
+}
 
 function normalizePathSpawnName(rawValue)
 	local trimmed = string.gsub(tostring(rawValue or ""), "^%s+", "")
@@ -7723,7 +7728,7 @@ function getSelectedPathSpawnName()
 	return getPathSlotSpawnName(pathState.focusedPathSlotIndex)
 end
 
-local FALLBACK_PATH_SPAWN_INFO = {
+FALLBACK_PATH_SPAWN_INFO = {
 	Bronze = { Name = "Bronze City" },
 	Delores = { Name = "Delores' Ranch" },
 	Tribal = { Name = "The Reservation" },
@@ -7733,7 +7738,7 @@ local FALLBACK_PATH_SPAWN_INFO = {
 	Dorado = { Name = "Puerto Dorado" },
 }
 
-local function mergePathSpawnInfoInto(target, source)
+function mergePathSpawnInfoInto(target, source)
 	if not isTable(target) or not isTable(source) then
 		return
 	end
