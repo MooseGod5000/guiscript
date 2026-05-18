@@ -9250,10 +9250,6 @@ function getEnvironmentTables()
 	return list
 end
 
-local hasPlrCharacterModule
-local resolveGameModules
-local resolveGlobalNetwork
-
 function hasGetEquippedItem(owner)
 	return isTable(owner) and type(owner.GetEquippedItem) == "function"
 end
