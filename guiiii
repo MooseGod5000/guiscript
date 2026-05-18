@@ -22,6 +22,17 @@ local _SoundService = game:GetService("SoundService")
 local _HttpService = game:GetService("HttpService")
 automineStartupDebug("services resolved")
 
+function resolveAutomineLocalPlayer(timeoutSeconds)
+    if _Players and _Players.LocalPlayer then
+        return _Players.LocalPlayer
+    end
+    local deadline = os.clock() + (tonumber(timeoutSeconds) or 5)
+    while _Players and not _Players.LocalPlayer and os.clock() < deadline do
+        task.wait(0.1)
+    end
+    return _Players and _Players.LocalPlayer or nil
+end
+
 local runtimeEnv = _G
 do
     local okEnv, executorEnv = pcall(function()
@@ -34,7 +45,10 @@ end
 runtimeEnv.__FOB_AUTOMINE_CFRAME_EXPERIMENT = true
 runtimeEnv.__FOB_AUTOMINE_FORCE_CFRAME = true
 automineStartupDebug("runtime environment ready")
-local localPlayer = _Players.LocalPlayer
+local localPlayer = resolveAutomineLocalPlayer(6)
+if not localPlayer then
+    automineStartupDebug("LocalPlayer was not ready during startup; player hooks will stay guarded")
+end
 local _SCRIPT_SESSION_START_TICK = tick()
 local AUTOMINE_ONLY_MODE = false
 local EXPERIMENTAL_AUTOMINE_CFRAME = true
@@ -6180,7 +6194,8 @@ pcall(function()
 	VirtualInputManager = game:GetService("VirtualInputManager")
 end)
 
-LocalPlayer = Players.LocalPlayer
+LocalPlayer = localPlayer or resolveAutomineLocalPlayer(5) or Players.LocalPlayer
+localPlayer = localPlayer or LocalPlayer
 
 GUI_NAME = "WildWestAutoMineGui"
 PICKAXE_NAME = "BasicPickaxe"
@@ -32180,57 +32195,61 @@ do
         end)
     end
 
-    localPlayer.CharacterAdded:Connect(function(character)
-        cachedCharacter = character
-        cachedHumanoid = getHumanoid(character)
-        cachedPickaxe = findPickaxe(character)
-        cachedInventorySlotsFrame = nil
-        task.defer(function()
-            task.wait(0.35)
-            if type(refreshPathDeathHopConnection) == "function" then
-                refreshPathDeathHopConnection()
+    if localPlayer and localPlayer.CharacterAdded then
+        localPlayer.CharacterAdded:Connect(function(character)
+            cachedCharacter = character
+            cachedHumanoid = getHumanoid(character)
+            cachedPickaxe = findPickaxe(character)
+            cachedInventorySlotsFrame = nil
+            task.defer(function()
+                task.wait(0.35)
+                if type(refreshPathDeathHopConnection) == "function" then
+                    refreshPathDeathHopConnection()
+                end
+            end)
+            local shouldResumeSavedSpawn = false
+            local pendingSpawnSlotIndex = normalizePathSlotIndex(pathState.spawnPlaybackPendingSlotIndex)
+            if pathState.spawnPlaybackAwaitingRespawn and type(pathState.spawnPlaybackPendingPathName) == "string" and pendingSpawnSlotIndex then
+                if pathSlotMatchesResolvedPathName(pendingSpawnSlotIndex, pathState.spawnPlaybackPendingPathName) then
+                    shouldResumeSavedSpawn = markPathSpawnPlaybackReady(
+                        pathState.spawnPlaybackPendingPathName,
+                        pathState.spawnPlaybackPendingSpawnName,
+                        pendingSpawnSlotIndex
+                    )
+                else
+                    cancelPendingPathSpawnPlayback(true)
+                end
             end
-        end)
-		local shouldResumeSavedSpawn = false
-		local pendingSpawnSlotIndex = normalizePathSlotIndex(pathState.spawnPlaybackPendingSlotIndex)
-		if pathState.spawnPlaybackAwaitingRespawn and type(pathState.spawnPlaybackPendingPathName) == "string" and pendingSpawnSlotIndex then
-			if pathSlotMatchesResolvedPathName(pendingSpawnSlotIndex, pathState.spawnPlaybackPendingPathName) then
-				shouldResumeSavedSpawn = markPathSpawnPlaybackReady(
-					pathState.spawnPlaybackPendingPathName,
-					pathState.spawnPlaybackPendingSpawnName,
-                    pendingSpawnSlotIndex
-                )
-            else
-                cancelPendingPathSpawnPlayback(true)
-            end
-        end
-        if autoMineEnabled or hasPlayerStateFeatureHooksEnabled() or shouldResumeSavedSpawn or type(pathState.spawnPlaybackReadyPathName) == "string" then
-            task.wait(1)
-            if shouldResumeSavedSpawn or type(pathState.spawnPlaybackReadyPathName) == "string" then
-                activeFarmMode = "path"
-                local ok, started = xpcall(function()
-                    return tryResumeReadyPathSpawnPlayback("respawn")
-                end, debug.traceback)
-                if not ok then
-                    autoMineEnabled = false
-                    activeFarmMode = nil
-                    setStatus("Path start failed", Color3.fromRGB(255, 130, 130))
-                    pushDebug(started)
-                elseif not started then
-                    if not (autoMineEnabled and activeFarmMode == "path") then
+            if autoMineEnabled or hasPlayerStateFeatureHooksEnabled() or shouldResumeSavedSpawn or type(pathState.spawnPlaybackReadyPathName) == "string" then
+                task.wait(1)
+                if shouldResumeSavedSpawn or type(pathState.spawnPlaybackReadyPathName) == "string" then
+                    activeFarmMode = "path"
+                    local ok, started = xpcall(function()
+                        return tryResumeReadyPathSpawnPlayback("respawn")
+                    end, debug.traceback)
+                    if not ok then
                         autoMineEnabled = false
                         activeFarmMode = nil
+                        setStatus("Path start failed", Color3.fromRGB(255, 130, 130))
+                        pushDebug(started)
+                    elseif not started then
+                        if not (autoMineEnabled and activeFarmMode == "path") then
+                            autoMineEnabled = false
+                            activeFarmMode = nil
+                        end
                     end
+                elseif autoMineEnabled then
+                    startAutoMine()
                 end
-            elseif autoMineEnabled then
-                startAutoMine()
+                if hasPlayerStateFeatureHooksEnabled() then
+                    ensurePlayerFeatureHooks()
+                    syncAllUi()
+                end
             end
-            if hasPlayerStateFeatureHooksEnabled() then
-                ensurePlayerFeatureHooks()
-                syncAllUi()
-            end
-        end
-    end)
+        end)
+    else
+        startupWarn("LocalPlayer CharacterAdded unavailable; skipping Roblox character respawn hook")
+    end
 
     task.spawn(function()
         while task.wait(1) do
