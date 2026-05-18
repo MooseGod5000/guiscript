@@ -9782,7 +9782,7 @@ function clearMovementKeys()
 	setMovementKey(Enum.KeyCode.LeftShift, false)
 end
 
-local AUTO_MINE_INPUT_LOCK_ITEMS = {
+AUTO_MINE_INPUT_LOCK_ITEMS = {
 	Enum.PlayerActions.CharacterForward,
 	Enum.PlayerActions.CharacterBackward,
 	Enum.PlayerActions.CharacterLeft,
@@ -9799,7 +9799,7 @@ local AUTO_MINE_INPUT_LOCK_ITEMS = {
 	Enum.KeyCode.Right,
 }
 
-local function areAutoMineMovementKeysHeld()
+function areAutoMineMovementKeysHeld()
 	return movementKeyState[Enum.KeyCode.W]
 		or movementKeyState[Enum.KeyCode.A]
 		or movementKeyState[Enum.KeyCode.S]
@@ -9807,7 +9807,7 @@ local function areAutoMineMovementKeysHeld()
 		or movementKeyState[Enum.KeyCode.LeftShift]
 end
 
-local function getLocalPlayerControls()
+function getLocalPlayerControls()
 	local playerScripts = LocalPlayer and LocalPlayer:FindFirstChild("PlayerScripts")
 	if not playerScripts then
 		return nil
@@ -9975,7 +9975,7 @@ function setCameraNoclipEnabled(value, skipPersistence)
 	schedulePersist()
 end
 
-local function restoreAutoMineMovementHumanoid()
+function restoreAutoMineMovementHumanoid()
 	local humanoid = autoMineLockedHumanoid
 	if humanoid then
 		pcall(function()
@@ -10013,7 +10013,7 @@ local function restoreAutoMineMovementHumanoid()
 	autoMineLockedAutoRotate = nil
 end
 
-local function releaseAutoMineManualMovementLock()
+function releaseAutoMineManualMovementLock()
 	if autoMineInputLockBound and ContextActionService then
 		pcall(function()
 			ContextActionService:UnbindAction(AUTOMINE_INPUT_LOCK_ACTION_NAME)
@@ -10029,7 +10029,7 @@ local function releaseAutoMineManualMovementLock()
 	restoreAutoMineMovementHumanoid()
 end
 
-local function ensureAutoMineManualMovementLock(character, humanoid)
+function ensureAutoMineManualMovementLock(character, humanoid)
 	if not autoMineEnabled then
 		releaseAutoMineManualMovementLock()
 		return
@@ -11709,7 +11709,7 @@ function clearEntryPathPlaybackVisualization()
 	clearPathVisualization()
 end
 
-local function findPathPlayerAvoiderVisualizerFolder()
+function findPathPlayerAvoiderVisualizerFolder()
 	if playerAvoiderVisualizerFolder and playerAvoiderVisualizerFolder.Parent then
 		return playerAvoiderVisualizerFolder
 	end
@@ -11745,7 +11745,7 @@ function clearPathPlayerAvoiderCorridorVisualization()
 	lastPlayerAvoiderVizSignature = nil
 end
 
-local function createPathPlayerAvoiderCorridorSegment(fromPosition, toPosition, segmentWidth, color)
+function createPathPlayerAvoiderCorridorSegment(fromPosition, toPosition, segmentWidth, color)
 	local delta = toPosition - fromPosition
 	local distance = delta.Magnitude
 	if distance <= 0.05 then
@@ -11770,7 +11770,7 @@ local function createPathPlayerAvoiderCorridorSegment(fromPosition, toPosition, 
 	return segment
 end
 
-local function createPathPlayerAvoiderRadiusSegment(fromPosition, toPosition, color, segmentIndex)
+function createPathPlayerAvoiderRadiusSegment(fromPosition, toPosition, color, segmentIndex)
 	local delta = toPosition - fromPosition
 	local distance = delta.Magnitude
 	if distance <= 0.05 then
@@ -11818,7 +11818,7 @@ function trimPathPlayerAvoiderRadiusSegments(usedCount)
 	end
 end
 
-local function samplePathPlayerAvoiderRadiusVisualizationPoint(rootPosition, originFloorPosition, radius, angle, character)
+function samplePathPlayerAvoiderRadiusVisualizationPoint(rootPosition, originFloorPosition, radius, angle, character)
 	local samplePosition = rootPosition + Vector3.new(
 		math.cos(angle) * radius,
 		0,
@@ -29436,6 +29436,7 @@ do
     leftStroke.Thickness = 1
     leftStroke.Parent = leftPanel
 
+    do
     local greetingLbl = Instance.new("TextLabel")
     greetingLbl.Size = UDim2.new(1, 0, 0, 34)
     greetingLbl.Position = UDim2.new(0, 0, 0, 10)
@@ -29452,7 +29453,9 @@ do
     greetingLbl.Font = Enum.Font.Code
     greetingLbl.TextSize = 16
     greetingLbl.Parent = leftPanel
+    end
 
+    do
     local avatarBorder = Instance.new("Frame")
     avatarBorder.Size = UDim2.new(0, 134, 0, 134)
     avatarBorder.Position = UDim2.new(0.5, -67, 0, 50)
@@ -29474,10 +29477,11 @@ do
     avatarImg.ScaleType = Enum.ScaleType.Fit
     avatarImg.Parent = avatarBorder
     Instance.new("UICorner", avatarImg).CornerRadius = UDim.new(0, 6)
+    end
 
     createLineSectionHeader(leftPanel, 190, "info", 44)
 
-    local function createInfoLabel(key, yPosition)
+    function createHomeDashboardInfoLabel(parent, key, yPosition)
         local label = Instance.new("TextLabel")
         label.Size = UDim2.new(1, -16, 0, 14)
         label.Position = UDim2.new(0, 8, 0, yPosition)
@@ -29486,18 +29490,18 @@ do
         label.TextSize = 11
         label.TextColor3 = Color3.fromRGB(175, 175, 180)
         label.TextXAlignment = Enum.TextXAlignment.Left
-        label.Parent = leftPanel
+        label.Parent = parent
         dashboardLabels[key] = label
         return label
     end
 
-    createInfoLabel("notifications", 208)
-    createInfoLabel("session", 224)
-    createInfoLabel("guiKey", 240)
-    createInfoLabel("panicKey", 256)
+    createHomeDashboardInfoLabel(leftPanel, "notifications", 208)
+    createHomeDashboardInfoLabel(leftPanel, "session", 224)
+    createHomeDashboardInfoLabel(leftPanel, "guiKey", 240)
+    createHomeDashboardInfoLabel(leftPanel, "panicKey", 256)
 
     createLineSectionHeader(leftPanel, 272, "bug report", 58)
-    local openBugReportModalBtn = Instance.new("TextButton")
+    openBugReportModalBtn = Instance.new("TextButton")
     openBugReportModalBtn.Size = UDim2.new(1, -16, 0, 26)
     openBugReportModalBtn.Position = UDim2.new(0, 8, 0, 288)
     openBugReportModalBtn.BackgroundColor3 = Color3.fromRGB(25, 25, 25)
@@ -29508,7 +29512,7 @@ do
     openBugReportModalBtn.AutoButtonColor = false
     openBugReportModalBtn.Parent = leftPanel
     Instance.new("UICorner", openBugReportModalBtn).CornerRadius = UDim.new(0, 4)
-    local bugStroke = Instance.new("UIStroke")
+    bugStroke = Instance.new("UIStroke")
     bugStroke.Color = Color3.fromRGB(45, 45, 45)
     bugStroke.Thickness = 1
     bugStroke.Parent = openBugReportModalBtn
@@ -29604,14 +29608,14 @@ do
     fpsLbl.TextXAlignment = Enum.TextXAlignment.Left
     fpsLbl.Parent = fpsPingRow
 
-    local fpTextContainer = Instance.new("Frame")
+    fpTextContainer = Instance.new("Frame")
     fpTextContainer.Size = UDim2.new(0, 50, 1, 0)
     fpTextContainer.Position = UDim2.new(1, -65, 0, 0)
     fpTextContainer.BackgroundTransparency = 1
     fpTextContainer.ClipsDescendants = true
     fpTextContainer.Parent = fpsPingRow
 
-    local fpOffLbl = Instance.new("TextLabel")
+    fpOffLbl = Instance.new("TextLabel")
     fpOffLbl.Size = UDim2.new(1, 0, 1, 0)
     fpOffLbl.BackgroundTransparency = 1
     fpOffLbl.TextColor3 = Color3.fromRGB(120, 120, 120)
@@ -29621,7 +29625,7 @@ do
     fpOffLbl.TextXAlignment = Enum.TextXAlignment.Right
     fpOffLbl.Parent = fpTextContainer
 
-    local fpOnLbl = Instance.new("TextLabel")
+    fpOnLbl = Instance.new("TextLabel")
     fpOnLbl.Size = UDim2.new(1, 0, 1, 0)
     fpOnLbl.Position = UDim2.new(1, 0, 0, 0)
     fpOnLbl.BackgroundTransparency = 1
@@ -29632,7 +29636,7 @@ do
     fpOnLbl.TextXAlignment = Enum.TextXAlignment.Right
     fpOnLbl.Parent = fpTextContainer
 
-    local function syncFpPingLabels()
+    function syncFpPingLabels()
         if S.fpsPingStatsEnabled then
             fpOffLbl.Position = UDim2.new(-1, 0, 0, 0)
             fpOnLbl.Position = UDim2.new(0, 0, 0, 0)
@@ -29642,7 +29646,7 @@ do
         end
     end
 
-    local fpsPingOverlay = Instance.new("ScreenGui")
+    fpsPingOverlay = Instance.new("ScreenGui")
     fpsPingOverlay.Name = "FobGuiOnlyFpsPingOverlay"
     fpsPingOverlay.ResetOnSpawn = false
     fpsPingOverlay.IgnoreGuiInset = true
@@ -29650,18 +29654,18 @@ do
     fpsPingOverlay.DisplayOrder = 100
     fpsPingOverlay.Enabled = false
     do
-        local okOverlay = pcall(function()
+        fpsPingOverlayParented = pcall(function()
             fpsPingOverlay.Parent = _CoreGui
         end)
-        if not okOverlay and localPlayer then
-            local playerGui = getImmediatePlayerGui()
-            if playerGui then
-                fpsPingOverlay.Parent = playerGui
+        if not fpsPingOverlayParented and localPlayer then
+            fpsPingOverlayPlayerGui = getImmediatePlayerGui()
+            if fpsPingOverlayPlayerGui then
+                fpsPingOverlay.Parent = fpsPingOverlayPlayerGui
             else
                 task.spawn(function()
-                    local latePlayerGui = localPlayer and localPlayer:WaitForChild("PlayerGui")
-                    if latePlayerGui and fpsPingOverlay and not fpsPingOverlay.Parent then
-                        fpsPingOverlay.Parent = latePlayerGui
+                    fpsPingOverlayLatePlayerGui = localPlayer and localPlayer:WaitForChild("PlayerGui")
+                    if fpsPingOverlayLatePlayerGui and fpsPingOverlay and not fpsPingOverlay.Parent then
+                        fpsPingOverlay.Parent = fpsPingOverlayLatePlayerGui
                     end
                 end)
             end
@@ -29669,19 +29673,19 @@ do
     end
     table.insert(_extraCleanupGuis, fpsPingOverlay)
 
-    local fpBg = Instance.new("Frame")
+    fpBg = Instance.new("Frame")
     fpBg.Size = UDim2.new(0, 220, 0, 28)
     fpBg.Position = UDim2.new(0, 10, 0, 10)
     fpBg.BackgroundColor3 = Color3.fromRGB(15, 15, 15)
     fpBg.BorderSizePixel = 0
     fpBg.Parent = fpsPingOverlay
     Instance.new("UICorner", fpBg).CornerRadius = UDim.new(0, 6)
-    local fpOverlayStroke = Instance.new("UIStroke")
+    fpOverlayStroke = Instance.new("UIStroke")
     fpOverlayStroke.Color = Color3.fromRGB(40, 40, 40)
     fpOverlayStroke.Thickness = 1
     fpOverlayStroke.Parent = fpBg
 
-    local fpText = Instance.new("TextLabel")
+    fpText = Instance.new("TextLabel")
     fpText.Size = UDim2.new(1, -12, 1, 0)
     fpText.Position = UDim2.new(0, 6, 0, 0)
     fpText.BackgroundTransparency = 1
@@ -29692,8 +29696,8 @@ do
     fpText.Text = "FPS: --  |  PING: -- ms"
     fpText.Parent = fpBg
 
-    local fpStatsConn = nil
-    local function setFpsPingOverlay(on)
+    fpStatsConn = nil
+    function setFpsPingOverlay(on)
         S.fpsPingStatsEnabled = on
         fpsPingOverlay.Enabled = on
         if fpStatsConn then
@@ -29758,19 +29762,19 @@ do
     end
 
     do
-    local fbBox = Instance.new("Frame")
+    fbBox = Instance.new("Frame")
     fbBox.Size = UDim2.new(1, 0, 0, 112)
     fbBox.Position = UDim2.new(0, 0, 0, 75)
     fbBox.BackgroundColor3 = Color3.fromRGB(15, 15, 15)
     fbBox.BorderSizePixel = 0
     fbBox.Parent = rightPanel
     Instance.new("UICorner", fbBox).CornerRadius = UDim.new(0, 6)
-    local fbStroke = Instance.new("UIStroke")
+    fbStroke = Instance.new("UIStroke")
     fbStroke.Color = Color3.fromRGB(35, 35, 35)
     fbStroke.Thickness = 1
     fbStroke.Parent = fbBox
 
-    local fIcon = Instance.new("ImageLabel")
+    fIcon = Instance.new("ImageLabel")
     fIcon.Size = UDim2.new(0, 18, 0, 18)
     fIcon.Position = UDim2.new(0, 10, 0, 7)
     fIcon.BackgroundTransparency = 1
@@ -29778,7 +29782,7 @@ do
     fIcon.ScaleType = Enum.ScaleType.Fit
     fIcon.Parent = fbBox
 
-    local fbLbl = Instance.new("TextLabel")
+    fbLbl = Instance.new("TextLabel")
     fbLbl.Size = UDim2.new(1, -34, 0, 32)
     fbLbl.Position = UDim2.new(0, 34, 0, 0)
     fbLbl.BackgroundTransparency = 1
@@ -29789,14 +29793,14 @@ do
     fbLbl.TextXAlignment = Enum.TextXAlignment.Left
     fbLbl.Parent = fbBox
 
-    local line2 = Instance.new("Frame")
+    line2 = Instance.new("Frame")
     line2.Size = UDim2.new(1, 0, 0, 1)
     line2.Position = UDim2.new(0, 0, 0, 32)
     line2.BackgroundColor3 = Color3.fromRGB(35, 35, 35)
     line2.BorderSizePixel = 0
     line2.Parent = fbBox
 
-    local openFeedbackModalBtn = Instance.new("TextButton")
+    openFeedbackModalBtn = Instance.new("TextButton")
     openFeedbackModalBtn.Size = UDim2.new(1, -20, 0, 28)
     openFeedbackModalBtn.Position = UDim2.new(0, 10, 0, 38)
     openFeedbackModalBtn.BackgroundColor3 = Color3.fromRGB(25, 25, 25)
@@ -29807,7 +29811,7 @@ do
     openFeedbackModalBtn.AutoButtonColor = false
     openFeedbackModalBtn.Parent = fbBox
     Instance.new("UICorner", openFeedbackModalBtn).CornerRadius = UDim.new(0, 4)
-    local feedbackButtonStroke = Instance.new("UIStroke")
+    feedbackButtonStroke = Instance.new("UIStroke")
     feedbackButtonStroke.Color = Color3.fromRGB(45, 45, 45)
     feedbackButtonStroke.Thickness = 1
     feedbackButtonStroke.Parent = openFeedbackModalBtn
@@ -29823,7 +29827,7 @@ do
         spawnNotification("GUI-only build does not include feedback webhooks.", "info", true)
     end)
 
-    local resetFeedbackCdBtn = Instance.new("TextButton")
+    resetFeedbackCdBtn = Instance.new("TextButton")
     resetFeedbackCdBtn.Size = UDim2.new(1, -20, 0, 22)
     resetFeedbackCdBtn.Position = UDim2.new(0, 10, 0, 72)
     resetFeedbackCdBtn.BackgroundColor3 = Color3.fromRGB(35, 28, 22)
@@ -29834,7 +29838,7 @@ do
     resetFeedbackCdBtn.AutoButtonColor = false
     resetFeedbackCdBtn.Parent = fbBox
     Instance.new("UICorner", resetFeedbackCdBtn).CornerRadius = UDim.new(0, 4)
-    local resetCdStroke = Instance.new("UIStroke")
+    resetCdStroke = Instance.new("UIStroke")
     resetCdStroke.Color = Color3.fromRGB(80, 55, 40)
     resetCdStroke.Thickness = 1
     resetCdStroke.Parent = resetFeedbackCdBtn
@@ -29948,14 +29952,14 @@ do
     autoFarmCardFrame.Parent = automineCanvas
     styleCard(autoFarmCardFrame, 14)
 
-    local autoFarmTitle = Instance.new("TextLabel")
+    autoFarmTitle = Instance.new("TextLabel")
     autoFarmTitle.Size = UDim2.new(1, -22, 0, 18)
     autoFarmTitle.Position = UDim2.fromOffset(12, 10)
     configureTextLabel(autoFarmTitle, Enum.Font.GothamBold, 14, UI_COLORS.text)
     autoFarmTitle.Text = "Automine Section"
     autoFarmTitle.Parent = autoFarmCardFrame
 
-    local autoFarmSubtitle = Instance.new("TextLabel")
+    autoFarmSubtitle = Instance.new("TextLabel")
     autoFarmSubtitle.Size = UDim2.new(1, -22, 0, 16)
     autoFarmSubtitle.Position = UDim2.fromOffset(12, 28)
     configureTextLabel(autoFarmSubtitle, Enum.Font.Gotham, 11, UI_COLORS.subtle)
@@ -29970,7 +29974,7 @@ do
     toggleButton.Parent = autoFarmCardFrame
     styleButton(toggleButton, 14)
 
-    local oreHint = Instance.new("TextLabel")
+    oreHint = Instance.new("TextLabel")
     oreHint.Size = UDim2.new(1, -24, 0, 14)
     oreHint.Position = UDim2.fromOffset(12, 88)
     configureTextLabel(oreHint, Enum.Font.Gotham, 11, UI_COLORS.subtle)
@@ -29994,7 +29998,7 @@ do
     styleCard(oreDropdownFrame, 10)
     oreDropdownFrame.BackgroundColor3 = UI_COLORS.panel
 
-    local oreList = Instance.new("ScrollingFrame")
+    oreList = Instance.new("ScrollingFrame")
     oreList.Name = "OreList"
     oreList.Size = UDim2.new(1, -12, 1, -12)
     oreList.Position = UDim2.fromOffset(6, 6)
@@ -30005,19 +30009,50 @@ do
     oreList.CanvasSize = UDim2.new(0, 0, 0, 0)
     oreList.Parent = oreDropdownFrame
 
-    local oreListLayout = Instance.new("UIListLayout")
+    oreListLayout = Instance.new("UIListLayout")
     oreListLayout.Padding = UDim.new(0, 6)
     oreListLayout.Parent = oreList
     bindCanvasToLayout(oreList, oreListLayout, 2)
 
-    for _, oreOption in ipairs(ORE_OPTIONS) do
-        local oreButton = Instance.new("TextButton")
-        oreButton.Name = oreOption.id .. "Button"
+    function connectOreOptionButton(button)
+        if not button then
+            return
+        end
+        button.MouseButton1Click:Connect(function()
+            local oreId = button:GetAttribute("OreId")
+            if type(oreId) ~= "string" or oreId == "" then
+                return
+            end
+            if selectedOreNames[oreId] then
+                selectedOreNames[oreId] = nil
+            else
+                selectedOreNames[oreId] = true
+            end
+            if currentTargetOre and not isOreNameSelected(getOreGroupName(currentTargetOre)) then
+                currentTargetOre = nil
+            end
+            if not hasSelectedOres() then
+                setStatus("Select at least one ore", Color3.fromRGB(255, 190, 120))
+            end
+            S.selectedOreNames = cloneBooleanMap(selectedOreNames)
+            schedulePersist()
+            refreshOreSelectionDisplay()
+        end)
+    end
+
+    oreUiOptionIndex = 1
+    while oreUiOptionIndex <= #ORE_OPTIONS do
+        oreUiOption = ORE_OPTIONS[oreUiOptionIndex]
+        oreButton = Instance.new("TextButton")
+        oreButton.Name = oreUiOption.id .. "Button"
+        oreButton:SetAttribute("OreId", oreUiOption.id)
         oreButton.Size = UDim2.new(1, -2, 0, 28)
         oreButton.Text = ""
         oreButton.Parent = oreList
         styleButton(oreButton, 12)
-        oreOptionButtons[oreOption.id] = oreButton
+        oreOptionButtons[oreUiOption.id] = oreButton
+        connectOreOptionButton(oreButton)
+        oreUiOptionIndex += 1
     end
 
     movementCardFrame = Instance.new("Frame")
@@ -30027,14 +30062,14 @@ do
     movementCardFrame.Parent = automineCanvas
     styleCard(movementCardFrame, 14)
 
-    local movementTitle = Instance.new("TextLabel")
+    movementTitle = Instance.new("TextLabel")
     movementTitle.Size = UDim2.new(1, -22, 0, 18)
     movementTitle.Position = UDim2.fromOffset(12, 10)
     configureTextLabel(movementTitle, Enum.Font.GothamBold, 14, UI_COLORS.text)
     movementTitle.Text = "Movement Section"
     movementTitle.Parent = movementCardFrame
 
-    local movementSubtitle = Instance.new("TextLabel")
+    movementSubtitle = Instance.new("TextLabel")
     movementSubtitle.Size = UDim2.new(1, -22, 0, 16)
     movementSubtitle.Position = UDim2.fromOffset(12, 28)
     configureTextLabel(movementSubtitle, Enum.Font.Gotham, 11, UI_COLORS.subtle)
@@ -30183,14 +30218,14 @@ do
     pickupCardFrame.Parent = automineCanvas
     styleCard(pickupCardFrame, 14)
 
-    local pickupTitle = Instance.new("TextLabel")
+    pickupTitle = Instance.new("TextLabel")
     pickupTitle.Size = UDim2.new(1, -22, 0, 18)
     pickupTitle.Position = UDim2.fromOffset(12, 10)
     configureTextLabel(pickupTitle, Enum.Font.GothamBold, 14, UI_COLORS.text)
     pickupTitle.Text = "Auto Pickup Section"
     pickupTitle.Parent = pickupCardFrame
 
-    local pickupSubtitle = Instance.new("TextLabel")
+    pickupSubtitle = Instance.new("TextLabel")
     pickupSubtitle.Size = UDim2.new(1, -22, 0, 16)
     pickupSubtitle.Position = UDim2.fromOffset(12, 28)
     configureTextLabel(pickupSubtitle, Enum.Font.Gotham, 11, UI_COLORS.subtle)
@@ -30227,7 +30262,7 @@ do
     styleCard(pickupWhitelistDropdownFrame, 10)
     pickupWhitelistDropdownFrame.BackgroundColor3 = UI_COLORS.panel
 
-    local pickupWhitelistList = Instance.new("ScrollingFrame")
+    pickupWhitelistList = Instance.new("ScrollingFrame")
     pickupWhitelistList.Size = UDim2.new(1, -12, 1, -12)
     pickupWhitelistList.Position = UDim2.fromOffset(6, 6)
     pickupWhitelistList.BackgroundTransparency = 1
@@ -30237,19 +30272,44 @@ do
     pickupWhitelistList.CanvasSize = UDim2.new(0, 0, 0, 0)
     pickupWhitelistList.Parent = pickupWhitelistDropdownFrame
 
-    local pickupWhitelistLayout = Instance.new("UIListLayout")
+    pickupWhitelistLayout = Instance.new("UIListLayout")
     pickupWhitelistLayout.Padding = UDim.new(0, 6)
     pickupWhitelistLayout.Parent = pickupWhitelistList
     bindCanvasToLayout(pickupWhitelistList, pickupWhitelistLayout, 2)
 
-    for _, pickupOption in ipairs(AUTO_PICKUP_OPTIONS) do
-        local pickupOptionButton = Instance.new("TextButton")
-        pickupOptionButton.Name = pickupOption.id .. "PickupButton"
+    function connectPickupWhitelistOptionButton(button)
+        if not button then
+            return
+        end
+        button.MouseButton1Click:Connect(function()
+            local pickupId = button:GetAttribute("PickupId")
+            if type(pickupId) ~= "string" or pickupId == "" then
+                return
+            end
+            if selectedPickupNames[pickupId] then
+                selectedPickupNames[pickupId] = nil
+            else
+                selectedPickupNames[pickupId] = true
+            end
+            S.selectedPickupNames = cloneBooleanMap(selectedPickupNames)
+            schedulePersist()
+            refreshPickupWhitelistDisplay()
+        end)
+    end
+
+    autoPickupUiOptionIndex = 1
+    while autoPickupUiOptionIndex <= #AUTO_PICKUP_OPTIONS do
+        autoPickupUiOption = AUTO_PICKUP_OPTIONS[autoPickupUiOptionIndex]
+        pickupOptionButton = Instance.new("TextButton")
+        pickupOptionButton.Name = autoPickupUiOption.id .. "PickupButton"
+        pickupOptionButton:SetAttribute("PickupId", autoPickupUiOption.id)
         pickupOptionButton.Size = UDim2.new(1, -2, 0, 28)
         pickupOptionButton.Text = ""
         pickupOptionButton.Parent = pickupWhitelistList
         styleButton(pickupOptionButton, 12)
-        pickupWhitelistOptionButtons[pickupOption.id] = pickupOptionButton
+        pickupWhitelistOptionButtons[autoPickupUiOption.id] = pickupOptionButton
+        connectPickupWhitelistOptionButton(pickupOptionButton)
+        autoPickupUiOptionIndex += 1
     end
 
     autoSellCardFrame = Instance.new("Frame")
@@ -30259,14 +30319,14 @@ do
     autoSellCardFrame.Parent = automineCanvas
     styleCard(autoSellCardFrame, 14)
 
-    local autoSellTitle = Instance.new("TextLabel")
+    autoSellTitle = Instance.new("TextLabel")
     autoSellTitle.Size = UDim2.new(1, -22, 0, 18)
     autoSellTitle.Position = UDim2.fromOffset(12, 10)
     configureTextLabel(autoSellTitle, Enum.Font.GothamBold, 14, UI_COLORS.text)
     autoSellTitle.Text = "Path Server Hop Section"
     autoSellTitle.Parent = autoSellCardFrame
 
-    local autoSellSubtitle = Instance.new("TextLabel")
+    autoSellSubtitle = Instance.new("TextLabel")
     autoSellSubtitle.Size = UDim2.new(1, -22, 0, 28)
     autoSellSubtitle.Position = UDim2.fromOffset(12, 28)
     configureTextLabel(autoSellSubtitle, Enum.Font.Gotham, 11, UI_COLORS.subtle)
@@ -30275,14 +30335,14 @@ do
     autoSellSubtitle.Text = "Saved paths handle their sell node. Server hop can join a smaller public server after a sell and try to resume the saved path."
     autoSellSubtitle.Parent = autoSellCardFrame
 
-    local serverHopTitle = Instance.new("TextLabel")
+    serverHopTitle = Instance.new("TextLabel")
     serverHopTitle.Size = UDim2.new(1, -24, 0, 16)
     serverHopTitle.Position = UDim2.fromOffset(12, 68)
     configureTextLabel(serverHopTitle, Enum.Font.GothamBold, 12, UI_COLORS.text)
     serverHopTitle.Text = "Path Server Hop"
     serverHopTitle.Parent = autoSellCardFrame
 
-    local serverHopHint = Instance.new("TextLabel")
+    serverHopHint = Instance.new("TextLabel")
     serverHopHint.Size = UDim2.new(1, -24, 0, 28)
     serverHopHint.Position = UDim2.fromOffset(12, 86)
     configureTextLabel(serverHopHint, Enum.Font.Gotham, 11, UI_COLORS.subtle)
@@ -30314,14 +30374,14 @@ do
     liveFeedCardFrame.Parent = automineCanvas
     styleCard(liveFeedCardFrame, 14)
 
-    local liveFeedTitle = Instance.new("TextLabel")
+    liveFeedTitle = Instance.new("TextLabel")
     liveFeedTitle.Size = UDim2.new(1, -22, 0, 18)
     liveFeedTitle.Position = UDim2.fromOffset(12, 10)
     configureTextLabel(liveFeedTitle, Enum.Font.GothamBold, 14, UI_COLORS.text)
     liveFeedTitle.Text = "Live Feed Section"
     liveFeedTitle.Parent = liveFeedCardFrame
 
-    local liveFeedSubtitle = Instance.new("TextLabel")
+    liveFeedSubtitle = Instance.new("TextLabel")
     liveFeedSubtitle.Size = UDim2.new(1, -22, 0, 16)
     liveFeedSubtitle.Position = UDim2.fromOffset(12, 28)
     configureTextLabel(liveFeedSubtitle, Enum.Font.Gotham, 11, UI_COLORS.subtle)
@@ -30931,28 +30991,6 @@ do
         registerAutomineLegacyButtonEntry(entry[1], entry[2])
     end
 
-    for _, oreOption in ipairs(ORE_OPTIONS) do
-        local oreButton = oreOptionButtons[oreOption.id]
-        if oreButton then
-            oreButton.MouseButton1Click:Connect(function()
-                if selectedOreNames[oreOption.id] then
-                    selectedOreNames[oreOption.id] = nil
-                else
-                    selectedOreNames[oreOption.id] = true
-                end
-                if currentTargetOre and not isOreNameSelected(getOreGroupName(currentTargetOre)) then
-                    currentTargetOre = nil
-                end
-                if not hasSelectedOres() then
-                    setStatus("Select at least one ore", Color3.fromRGB(255, 190, 120))
-                end
-                S.selectedOreNames = cloneBooleanMap(selectedOreNames)
-                schedulePersist()
-                refreshOreSelectionDisplay()
-            end)
-        end
-    end
-
     oreDropdownButton.MouseButton1Click:Connect(function()
         setOreDropdownOpen(not oreDropdownOpen)
         updateAutofarmLayout()
@@ -31113,22 +31151,6 @@ do
         refreshPickupWhitelistDisplay()
     end)
 
-    for _, pickupOption in ipairs(AUTO_PICKUP_OPTIONS) do
-        local optionButton = pickupWhitelistOptionButtons[pickupOption.id]
-        if optionButton then
-            optionButton.MouseButton1Click:Connect(function()
-                if selectedPickupNames[pickupOption.id] then
-                    selectedPickupNames[pickupOption.id] = nil
-                else
-                    selectedPickupNames[pickupOption.id] = true
-                end
-                S.selectedPickupNames = cloneBooleanMap(selectedPickupNames)
-                schedulePersist()
-                refreshPickupWhitelistDisplay()
-            end)
-        end
-    end
-
     pathUi.subTabButtons.AutofarmSettings.MouseButton1Click:Connect(function()
         setAutofarmSubTab("AutofarmSettings")
     end)
@@ -31209,7 +31231,7 @@ do
     end)
 
     do
-        local previousRegistryTab = _currentRegistryTab
+        previousRegistryTab = _currentRegistryTab
         _currentRegistryTab = nil
         pathUi.useFobRows = true
 
@@ -31221,24 +31243,27 @@ do
         if pathUi.pathsPage then pathUi.pathsPage.Visible = false end
         if pathUi.managerCard then pathUi.managerCard.Visible = false end
 
-        local function nextCustomOrder(guiObject)
+        function nextCustomOrder(guiObject)
             _rowLayoutCounter = _rowLayoutCounter + 1
             guiObject.LayoutOrder = _rowLayoutCounter
             return guiObject
         end
 
-        local function clearSelectionMap(targetMap)
+        function clearSelectionMap(targetMap)
             for key in pairs(targetMap) do
                 targetMap[key] = nil
             end
         end
 
-        local function getPickupOptionIdFromValue(value)
-            local loweredValue = string.lower(tostring(value or ""))
-            for _, pickupOption in ipairs(AUTO_PICKUP_OPTIONS) do
-                if loweredValue == string.lower(pickupOption.id) or loweredValue == string.lower(pickupOption.label) then
-                    return pickupOption.id
+        function getPickupOptionIdFromValue(value)
+            pickupOptionLoweredValue = string.lower(tostring(value or ""))
+            pickupOptionLookupIndex = 1
+            while pickupOptionLookupIndex <= #AUTO_PICKUP_OPTIONS do
+                pickupOptionLookupEntry = AUTO_PICKUP_OPTIONS[pickupOptionLookupIndex]
+                if pickupOptionLoweredValue == string.lower(pickupOptionLookupEntry.id) or pickupOptionLoweredValue == string.lower(pickupOptionLookupEntry.label) then
+                    return pickupOptionLookupEntry.id
                 end
+                pickupOptionLookupIndex += 1
             end
             return nil
         end
@@ -31511,20 +31536,23 @@ do
             "Pickup Type",
             pathUi.mainRowsPage,
             function()
-                local options = {"none"}
-                for _, pickupOption in ipairs(AUTO_PICKUP_OPTIONS) do
-                    table.insert(options, pickupOption.label)
+                pickupDropdownOptions = {"none"}
+                pickupDropdownOptionIndex = 1
+                while pickupDropdownOptionIndex <= #AUTO_PICKUP_OPTIONS do
+                    pickupDropdownOption = AUTO_PICKUP_OPTIONS[pickupDropdownOptionIndex]
+                    table.insert(pickupDropdownOptions, pickupDropdownOption.label)
+                    pickupDropdownOptionIndex += 1
                 end
-                return options
+                return pickupDropdownOptions
             end,
             function()
                 return getSelectedPickupSummary()
             end,
             function(value)
                 clearSelectionMap(selectedPickupNames)
-                local pickupId = getPickupOptionIdFromValue(value)
-                if pickupId then
-                    selectedPickupNames[pickupId] = true
+                pickupSelectedDropdownId = getPickupOptionIdFromValue(value)
+                if pickupSelectedDropdownId then
+                    selectedPickupNames[pickupSelectedDropdownId] = true
                 end
                 S.selectedPickupNames = cloneBooleanMap(selectedPickupNames)
                 schedulePersist()
@@ -32552,11 +32580,11 @@ do
     tabTitles["WEAPONS"] = title
     _currentRegistryTab = "WEAPONS"
 
-    local dynamiteList, dynamiteHeaderLabel = createCollapsibleSection("Dynamite misc", elementsList)
+    dynamiteList, dynamiteHeaderLabel = createCollapsibleSection("Dynamite misc", elementsList)
     dynamiteHeaderLabel.RichText = true
     dynamiteHeaderLabel.Text = '<font color="#ffb64a">Dynamite misc</font>'
 
-    local tpDynamiteRow, _, tpDynamiteSync = createToggleRow("TP Dynamite", dynamiteList, function()
+    tpDynamiteRow, _, tpDynamiteSync = createToggleRow("TP Dynamite", dynamiteList, function()
         return S.dynamiteTpEnabled
     end, function()
         S.dynamiteTpEnabled = not S.dynamiteTpEnabled
@@ -32564,7 +32592,7 @@ do
         spawnNotification("TP Dynamite " .. (S.dynamiteTpEnabled and "enabled." or "disabled."), S.dynamiteTpEnabled and "success" or "warning", true)
     end)
 
-    local tpStyleRow, tpStyleSync = createDropdownRow("TP Style", dynamiteList, {"Blatant", "Silent"}, function()
+    tpStyleRow, tpStyleSync = createDropdownRow("TP Style", dynamiteList, {"Blatant", "Silent"}, function()
         return S.dynamiteStyle
     end, function(value)
         S.dynamiteStyle = tostring(value or "Blatant")
@@ -32572,7 +32600,7 @@ do
         spawnNotification("Dynamite style set to " .. S.dynamiteStyle .. ".", "info", true)
     end)
 
-    local tpTargetRow, tpTargetSync = createDropdownRow("TP Target", dynamiteList, {"Vault", "Tunnel", "Player"}, function()
+    tpTargetRow, tpTargetSync = createDropdownRow("TP Target", dynamiteList, {"Vault", "Tunnel", "Player"}, function()
         return S.dynamiteTarget
     end, function(value)
         S.dynamiteTarget = tostring(value or "Vault")
@@ -32586,7 +32614,7 @@ do
         spawnNotification("Dynamite target set to " .. S.dynamiteTarget .. ".", "info", true)
     end)
 
-    local spectateRow, _, spectateSync = createToggleRow("Spectate", dynamiteList, function()
+    spectateRow, _, spectateSync = createToggleRow("Spectate", dynamiteList, function()
         return S.dynamiteSpectateEnabled
     end, function()
         S.dynamiteSpectateEnabled = not S.dynamiteSpectateEnabled
@@ -32599,7 +32627,7 @@ do
         spawnNotification("Dynamite spectate " .. (S.dynamiteSpectateEnabled and "enabled." or "disabled."), S.dynamiteSpectateEnabled and "success" or "warning", true)
     end)
 
-    local selectPlayerRow, selectPlayerSync = createDropdownRow("Select Player", dynamiteList, function()
+    selectPlayerRow, selectPlayerSync = createDropdownRow("Select Player", dynamiteList, function()
         return getDynamitePlayerOptions()
     end, function()
         return ensureValidDynamiteSelectedPlayer()
@@ -32609,7 +32637,7 @@ do
         schedulePersist()
         spawnNotification("Dynamite player target set to " .. tostring(S.dynamiteSelectedPlayer) .. ".", "info", true)
     end)
-    local markPlayersRow, markPlayersSync = createToggleKeybindRow("Mark Players", dynamiteList, Color3.fromRGB(255, 85, 85), function()
+    markPlayersRow, markPlayersSync = createToggleKeybindRow("Mark Players", dynamiteList, Color3.fromRGB(255, 85, 85), function()
         return S.dynamiteMarkPlayersEnabled
     end, function()
         S.dynamiteMarkPlayersEnabled = not S.dynamiteMarkPlayersEnabled
@@ -32629,14 +32657,14 @@ do
         spawnNotification("Dynamite mark key set to " .. formatKeyCodeName(S.keybinds.dynamiteMark) .. ".", "success", true)
     end, "Press a key. Esc cancels, Delete resets to F.")
 
-    local dynamiteRowsInitialized = false
+    dynamiteRowsInitialized = false
 
-    local function syncDynamiteRows()
-        local isPlayerTarget = S.dynamiteTarget == "Player"
+    function syncDynamiteRows()
+        dynamiteRowsPlayerTarget = S.dynamiteTarget == "Player"
         ensureValidDynamiteSelectedPlayer()
-        setAnimatedRowVisible(spectateRow, isPlayerTarget, 38, not dynamiteRowsInitialized)
-        setAnimatedRowVisible(selectPlayerRow, isPlayerTarget, 38, not dynamiteRowsInitialized)
-        setAnimatedRowVisible(markPlayersRow, isPlayerTarget, 38, not dynamiteRowsInitialized)
+        setAnimatedRowVisible(spectateRow, dynamiteRowsPlayerTarget, 38, not dynamiteRowsInitialized)
+        setAnimatedRowVisible(selectPlayerRow, dynamiteRowsPlayerTarget, 38, not dynamiteRowsInitialized)
+        setAnimatedRowVisible(markPlayersRow, dynamiteRowsPlayerTarget, 38, not dynamiteRowsInitialized)
         pcall(tpDynamiteSync)
         pcall(tpStyleSync)
         pcall(tpTargetSync)
@@ -32951,22 +32979,22 @@ tabButtons["KEYBINDS"] = {btn = keybindsBtn, indicator = keybindsIndicator, labe
 tabContents["KEYBINDS"] = keybindsContent
 createTabBackground(keybindsContent)
 do
-    local title, elementsList = createTabLayout(keybindsContent)
+    title, elementsList = createTabLayout(keybindsContent)
     tabTitles["KEYBINDS"] = title
 
-    local keybindListening = false
-    local keybindListeningBtn = nil
-    local keybindListenConn = nil
-    local keybindRows = {}
+    keybindListening = false
+    keybindListeningBtn = nil
+    keybindListenConn = nil
+    keybindRows = {}
 
-    local function getKeyDisplayName(keyCode)
+    function getKeyDisplayName(keyCode)
         if not keyCode then
             return "none"
         end
         return keyCode.Name
     end
 
-    local function stopKeybindListening()
+    function stopKeybindListening()
         if not keybindListening then
             return
         end
@@ -32993,7 +33021,7 @@ do
         end
     end
 
-    local searchBarBg = Instance.new("Frame")
+    searchBarBg = Instance.new("Frame")
     searchBarBg.Size = UDim2.new(1, 0, 0, 32)
     searchBarBg.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
     searchBarBg.BorderSizePixel = 1
@@ -33002,7 +33030,7 @@ do
     searchBarBg.Parent = elementsList
     Instance.new("UICorner", searchBarBg).CornerRadius = UDim.new(0, 6)
 
-    local searchBox = Instance.new("TextBox")
+    searchBox = Instance.new("TextBox")
     searchBox.Size = UDim2.new(1, -20, 1, 0)
     searchBox.Position = UDim2.new(0, 10, 0, 0)
     searchBox.BackgroundTransparency = 1
@@ -33016,13 +33044,13 @@ do
     searchBox.ClearTextOnFocus = false
     searchBox.Parent = searchBarBg
 
-    local kbLayoutOrder = 0
-    local function nextKbOrder()
+    kbLayoutOrder = 0
+    function nextKbOrder()
         kbLayoutOrder = kbLayoutOrder + 1
         return kbLayoutOrder
     end
 
-    local function createKeybindSectionHeader(text)
+    function createKeybindSectionHeader(text)
         local header = Instance.new("TextLabel")
         header.Size = UDim2.new(1, 0, 0, 28)
         header.BackgroundColor3 = Color3.fromRGB(18, 18, 18)
@@ -33038,7 +33066,7 @@ do
         return header
     end
 
-    local function createKeybindRow(regEntry)
+    function createKeybindRow(regEntry)
         local rowName = regEntry.name
         local rowKey = regEntry.tab .. ":" .. regEntry.name
 
@@ -33251,24 +33279,33 @@ do
         return row
     end
 
-    local allKbElements = {}
-    local tabOrder = {"Home", "AUTOMINE", "WEAPONS", "PLAYER", "VISUALS", "GAME", "SETTINGS"}
+    allKbElements = {}
+    keybindTabOrder = {"Home", "AUTOMINE", "WEAPONS", "PLAYER", "VISUALS", "GAME", "SETTINGS"}
 
-    for _, tabName in ipairs(tabOrder) do
-        local tabEntries = {}
-        for _, regEntry in ipairs(_buttonRegistry) do
-            if regEntry.tab == tabName and regEntry.type ~= "slider" then
-                table.insert(tabEntries, regEntry)
+    keybindTabOrderIndex = 1
+    while keybindTabOrderIndex <= #keybindTabOrder do
+        keybindTabName = keybindTabOrder[keybindTabOrderIndex]
+        keybindTabEntries = {}
+        keybindRegistryIndex = 1
+        while keybindRegistryIndex <= #_buttonRegistry do
+            keybindRegEntry = _buttonRegistry[keybindRegistryIndex]
+            if keybindRegEntry.tab == keybindTabName and keybindRegEntry.type ~= "slider" then
+                table.insert(keybindTabEntries, keybindRegEntry)
+            end
+            keybindRegistryIndex += 1
+        end
+        if #keybindTabEntries > 0 then
+            keybindSectionHeader = createKeybindSectionHeader(keybindTabName)
+            table.insert(allKbElements, {element = keybindSectionHeader, names = {}})
+            keybindTabEntryIndex = 1
+            while keybindTabEntryIndex <= #keybindTabEntries do
+                keybindRowRegEntry = keybindTabEntries[keybindTabEntryIndex]
+                keybindCreatedRow = createKeybindRow(keybindRowRegEntry)
+                table.insert(allKbElements, {element = keybindCreatedRow, names = {keybindRowRegEntry.name:lower()}})
+                keybindTabEntryIndex += 1
             end
         end
-        if #tabEntries > 0 then
-            local header = createKeybindSectionHeader(tabName)
-            table.insert(allKbElements, {element = header, names = {}})
-            for _, regEntry in ipairs(tabEntries) do
-                local row = createKeybindRow(regEntry)
-                table.insert(allKbElements, {element = row, names = {regEntry.name:lower()}})
-            end
-        end
+        keybindTabOrderIndex += 1
     end
 
     searchBox:GetPropertyChangedSignal("Text"):Connect(function()
