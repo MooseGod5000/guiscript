@@ -272,6 +272,8 @@ local DEFAULTS = {
     infiniteOxygenEnabled = false,
     disableWaterLogicEnabled = false,
     horseInfiniteStaminaEnabled = false,
+    horseNoWaterSlowEnabled = false,
+    horseAntiRagdollEnabled = false,
     silentAimEnabled = false,
     silentAimBodyTarget = "Head",
     silentAimMode = "FOV",
@@ -1063,6 +1065,8 @@ if type(tweenMoveSpeed) == "number" then
         S.infiniteOxygenEnabled = playerState.infiniteOxygenEnabled == true
         S.disableWaterLogicEnabled = playerState.disableWaterLogicEnabled == true
         S.horseInfiniteStaminaEnabled = playerState.horseInfiniteStaminaEnabled == true
+        S.horseNoWaterSlowEnabled = playerState.horseNoWaterSlowEnabled == true
+        S.horseAntiRagdollEnabled = playerState.horseAntiRagdollEnabled == true
     end
     if type(autoPickupEnabled) == "boolean" then
         S.autoPickupEnabled = autoPickupEnabled
@@ -1131,6 +1135,8 @@ local function serializeState()
         infiniteOxygenEnabled = S.infiniteOxygenEnabled,
         disableWaterLogicEnabled = S.disableWaterLogicEnabled,
         horseInfiniteStaminaEnabled = S.horseInfiniteStaminaEnabled,
+        horseNoWaterSlowEnabled = S.horseNoWaterSlowEnabled,
+        horseAntiRagdollEnabled = S.horseAntiRagdollEnabled,
         silentAimEnabled = S.silentAimEnabled,
         silentAimBodyTarget = S.silentAimBodyTarget,
         silentAimMode = S.silentAimMode,
@@ -1307,6 +1313,12 @@ function applySerializedState(data)
     end
     if type(data.horseInfiniteStaminaEnabled) == "boolean" then
         S.horseInfiniteStaminaEnabled = data.horseInfiniteStaminaEnabled
+    end
+    if type(data.horseNoWaterSlowEnabled) == "boolean" then
+        S.horseNoWaterSlowEnabled = data.horseNoWaterSlowEnabled
+    end
+    if type(data.horseAntiRagdollEnabled) == "boolean" then
+        S.horseAntiRagdollEnabled = data.horseAntiRagdollEnabled
     end
     if type(data.silentAimEnabled) == "boolean" then
         S.silentAimEnabled = data.silentAimEnabled
@@ -6705,6 +6717,8 @@ playerState = {
 	infiniteOxygenEnabled = S.infiniteOxygenEnabled,
 	disableWaterLogicEnabled = S.disableWaterLogicEnabled,
 	horseInfiniteStaminaEnabled = S.horseInfiniteStaminaEnabled,
+	horseNoWaterSlowEnabled = S.horseNoWaterSlowEnabled,
+	horseAntiRagdollEnabled = S.horseAntiRagdollEnabled,
 	displayStamina = 100,
 	hookedNetwork = nil,
 	originalNetworkFireServer = nil,
@@ -6754,6 +6768,10 @@ playerState = {
 	originalWaterIsInWater = nil,
 	waterIsInWaterWrapper = nil,
 	waterLogicSwimmingDisabledOwner = nil,
+	horseNoWaterSlowConnection = nil,
+	horseNoWaterSlowOriginalSpeeds = {},
+	horseAntiRagdollConnection = nil,
+	horseAntiRagdollHooks = {},
 	cactusTouchDisabledInstances = {},
 	cactusDescendantConnections = {},
 	cactusFoliageAddedConnection = nil,
@@ -6844,6 +6862,8 @@ function applyStoredStateToRuntime()
         playerState.infiniteOxygenEnabled = S.infiniteOxygenEnabled == true
         playerState.disableWaterLogicEnabled = S.disableWaterLogicEnabled == true
         playerState.horseInfiniteStaminaEnabled = S.horseInfiniteStaminaEnabled == true
+        playerState.horseNoWaterSlowEnabled = S.horseNoWaterSlowEnabled == true
+        playerState.horseAntiRagdollEnabled = S.horseAntiRagdollEnabled == true
     end
 
     _G.__AutoMineNoRecoilEnabled = S.noRecoilEnabled == true
@@ -24927,6 +24947,7 @@ function hasPlayerStateNetworkHookEnabled()
         or playerState.safeTeleportEnabled
         or playerState.noFallDamageEnabled
         or playerState.noDamageSelfEnabled
+        or playerState.horseAntiRagdollEnabled
         or S.silentAimEnabled
         or S.fastProjectileEnabled
         or S.noSpreadEnabled
@@ -24942,6 +24963,8 @@ function hasPlayerStateFeatureHooksEnabled()
 		or playerState.autoBreakFreeEnabled
 		or playerState.autoGetUpEnabled
 		or playerState.horseInfiniteStaminaEnabled
+		or playerState.horseNoWaterSlowEnabled
+		or playerState.horseAntiRagdollEnabled
         or playerState.equipWhileSwimmingEnabled
         or hasGunFeatureHooksEnabled()
 end
@@ -24956,6 +24979,10 @@ function shouldBlockPlayerStateRemote(remoteName)
 	end
 
 	if playerState.noDamageSelfEnabled and remoteName == "DamageSelf" then
+		return true
+	end
+
+	if playerState.horseAntiRagdollEnabled and (remoteName == "HorseTrip" or remoteName == "AnimalKnockOut") then
 		return true
 	end
 
@@ -25143,6 +25170,186 @@ function ensureHorseInfiniteStaminaHooks()
 			return
 		end
 		refillHorseStamina(resolveRidingAnimal(false) or resolveRidingAnimal(true))
+	end)
+end
+
+function applyHorseNoWaterSlow(ridingAnimal)
+	if not isTable(ridingAnimal) then
+		return false
+	end
+
+	if type(playerState.horseNoWaterSlowOriginalSpeeds) ~= "table" then
+		playerState.horseNoWaterSlowOriginalSpeeds = {}
+	end
+
+	local originalSpeeds = playerState.horseNoWaterSlowOriginalSpeeds
+	if originalSpeeds[ridingAnimal] == nil then
+		local originalSpeed = rawget(ridingAnimal, "SwimmingSpeed") or ridingAnimal.SwimmingSpeed
+		originalSpeeds[ridingAnimal] = originalSpeed == nil and false or originalSpeed
+	end
+
+	local originalSpeed = tonumber(originalSpeeds[ridingAnimal])
+	local sprintingSpeed = tonumber(rawget(ridingAnimal, "SprintingSpeed") or ridingAnimal.SprintingSpeed) or 0
+	local canterSpeed = tonumber(rawget(ridingAnimal, "CanterSpeed") or ridingAnimal.CanterSpeed) or 0
+	local maxSpeed = tonumber(rawget(ridingAnimal, "MaxSpeed") or ridingAnimal.MaxSpeed) or 0
+	local walkSpeed = tonumber(rawget(ridingAnimal, "WalkingSpeed") or ridingAnimal.WalkingSpeed) or 0
+	local targetSpeed = math.max(originalSpeed or 0, sprintingSpeed, canterSpeed, maxSpeed, walkSpeed)
+	if targetSpeed <= 0 then
+		return false
+	end
+
+	pcall(function()
+		ridingAnimal.SwimmingSpeed = targetSpeed
+	end)
+	return true
+end
+
+function restoreHorseNoWaterSlowHooks()
+	local connection = playerState.horseNoWaterSlowConnection
+	if connection then
+		pcall(function()
+			connection:Disconnect()
+		end)
+	end
+	playerState.horseNoWaterSlowConnection = nil
+
+	local originalSpeeds = playerState.horseNoWaterSlowOriginalSpeeds
+	if type(originalSpeeds) == "table" then
+		for ridingAnimal, originalSpeed in pairs(originalSpeeds) do
+			if isTable(ridingAnimal) then
+				pcall(function()
+					ridingAnimal.SwimmingSpeed = originalSpeed ~= false and originalSpeed or nil
+				end)
+			end
+		end
+	end
+	playerState.horseNoWaterSlowOriginalSpeeds = {}
+end
+
+function ensureHorseNoWaterSlowHooks()
+	if not playerState.horseNoWaterSlowEnabled then
+		return
+	end
+
+	applyHorseNoWaterSlow(resolveRidingAnimal(false) or resolveRidingAnimal(true))
+
+	if playerState.horseNoWaterSlowConnection then
+		return
+	end
+
+	playerState.horseNoWaterSlowConnection = _RunService.Heartbeat:Connect(function()
+		if not isSessionActive() or not playerState.horseNoWaterSlowEnabled then
+			restoreHorseNoWaterSlowHooks()
+			return
+		end
+		applyHorseNoWaterSlow(resolveRidingAnimal(false) or resolveRidingAnimal(true))
+	end)
+end
+
+function clearHorseRagdollState(ridingAnimal)
+	if not isTable(ridingAnimal) then
+		return false
+	end
+
+	pcall(function()
+		ridingAnimal.Ragdolled = false
+		ridingAnimal.IsWakingUp = false
+		ridingAnimal.IsWakingUpServer = false
+		ridingAnimal.Falling = false
+		ridingAnimal.lastfalling = false
+		ridingAnimal.FallTime = nil
+		if ridingAnimal.bg and ridingAnimal.bgtorque then
+			ridingAnimal.bg.MaxTorque = ridingAnimal.bgtorque
+		end
+		if ridingAnimal.bv and ridingAnimal.bvforce then
+			ridingAnimal.bv.MaxForce = ridingAnimal.bvforce
+		end
+	end)
+	return true
+end
+
+function installHorseAntiRagdollHook(ridingAnimal)
+	if not isTable(ridingAnimal) then
+		return false
+	end
+
+	if type(playerState.horseAntiRagdollHooks) ~= "table" then
+		playerState.horseAntiRagdollHooks = {}
+	end
+
+	local hooks = playerState.horseAntiRagdollHooks
+	local existingHook = hooks[ridingAnimal]
+	if existingHook then
+		clearHorseRagdollState(ridingAnimal)
+		return true
+	end
+
+	local originalKnockOut = rawget(ridingAnimal, "KnockOut") or ridingAnimal.KnockOut
+	if type(originalKnockOut) ~= "function" then
+		clearHorseRagdollState(ridingAnimal)
+		return false
+	end
+
+	local hook = {
+		originalKnockOut = originalKnockOut,
+	}
+	hook.knockOutWrapper = function(self, ...)
+		if playerState.horseAntiRagdollEnabled then
+			clearHorseRagdollState(isTable(self) and self or ridingAnimal)
+			return nil
+		end
+		return hook.originalKnockOut(self, ...)
+	end
+
+	pcall(function()
+		ridingAnimal.KnockOut = hook.knockOutWrapper
+	end)
+	hooks[ridingAnimal] = hook
+	clearHorseRagdollState(ridingAnimal)
+	return true
+end
+
+function restoreHorseAntiRagdollHooks()
+	local connection = playerState.horseAntiRagdollConnection
+	if connection then
+		pcall(function()
+			connection:Disconnect()
+		end)
+	end
+	playerState.horseAntiRagdollConnection = nil
+
+	local hooks = playerState.horseAntiRagdollHooks
+	if type(hooks) == "table" then
+		for ridingAnimal, hook in pairs(hooks) do
+			if isTable(ridingAnimal) and isTable(hook) then
+				pcall(function()
+					if ridingAnimal.KnockOut == hook.knockOutWrapper then
+						ridingAnimal.KnockOut = hook.originalKnockOut
+					end
+				end)
+			end
+		end
+	end
+	playerState.horseAntiRagdollHooks = {}
+end
+
+function ensureHorseAntiRagdollHooks()
+	if not playerState.horseAntiRagdollEnabled then
+		return
+	end
+
+	installHorseAntiRagdollHook(resolveRidingAnimal(false) or resolveRidingAnimal(true))
+
+	if playerState.horseAntiRagdollConnection then
+		return
+	end
+
+	playerState.horseAntiRagdollConnection = _RunService.Heartbeat:Connect(function()
+		if not isSessionActive() or not playerState.horseAntiRagdollEnabled then
+			restoreHorseAntiRagdollHooks()
+			return
+		end
+		installHorseAntiRagdollHook(resolveRidingAnimal(false) or resolveRidingAnimal(true))
 	end)
 end
 
@@ -25878,6 +26085,18 @@ function ensurePlayerFeatureHooks()
 		restoreHorseInfiniteStaminaHooks()
 	end
 
+	if playerState.horseNoWaterSlowEnabled then
+		ensureHorseNoWaterSlowHooks()
+	else
+		restoreHorseNoWaterSlowHooks()
+	end
+
+	if playerState.horseAntiRagdollEnabled then
+		ensureHorseAntiRagdollHooks()
+	else
+		restoreHorseAntiRagdollHooks()
+	end
+
 	if playerState.noCactusDamageEnabled then
 		ensureNoCactusDamageHooks()
 	else
@@ -25918,6 +26137,12 @@ function ensurePlayerFeatureHooks()
 				if playerState.horseInfiniteStaminaEnabled then
 					ensureHorseInfiniteStaminaHooks()
 				end
+				if playerState.horseNoWaterSlowEnabled then
+					ensureHorseNoWaterSlowHooks()
+				end
+				if playerState.horseAntiRagdollEnabled then
+					ensureHorseAntiRagdollHooks()
+				end
 				if playerState.noCactusDamageEnabled then
 					ensureNoCactusDamageHooks()
 				end
@@ -25934,6 +26159,8 @@ function ensurePlayerFeatureHooks()
 			restoreNoRollCooldownHooks()
 			restoreSpeedChangerHooks()
 			restoreHorseInfiniteStaminaHooks()
+			restoreHorseNoWaterSlowHooks()
+			restoreHorseAntiRagdollHooks()
 			restoreNoCactusDamageHooks()
             restoreAutoBreakFreeHooks()
             restoreGunFeatureHooks()
@@ -28622,6 +28849,14 @@ end
 
 function setHorseInfiniteStaminaEnabled(isEnabled)
 	return setPlayerFeatureFlag("horseInfiniteStaminaEnabled", isEnabled, "horse infinite stamina")
+end
+
+function setHorseNoWaterSlowEnabled(isEnabled)
+	return setPlayerFeatureFlag("horseNoWaterSlowEnabled", isEnabled, "horse no water slow")
+end
+
+function setHorseAntiRagdollEnabled(isEnabled)
+	return setPlayerFeatureFlag("horseAntiRagdollEnabled", isEnabled, "horse anti ragdoll")
 end
 
 function setSpeedChangerValue(value, skipPersistence)
@@ -34941,6 +35176,8 @@ function __westwareBuildPlayerTab()
     horseHeaderLabel.RichText = true
     horseHeaderLabel.Text = '<font color="#d9d9d9">Horse</font>'
     createBoundToggleRow("Infinite Stamina", horseList, playerState, "horseInfiniteStaminaEnabled", setHorseInfiniteStaminaEnabled)
+    createBoundToggleRow("No water slow", horseList, playerState, "horseNoWaterSlowEnabled", setHorseNoWaterSlowEnabled)
+    createBoundToggleRow("Anti ragdoll", horseList, playerState, "horseAntiRagdollEnabled", setHorseAntiRagdollEnabled)
 
     local playerRowsInitialized = false
     local function syncPlayerRows()
