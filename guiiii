@@ -269,6 +269,8 @@ local DEFAULTS = {
     autoBreakFreeEnabled = false,
     autoGetUpEnabled = false,
     equipWhileSwimmingEnabled = false,
+    infiniteOxygenEnabled = false,
+    disableWaterLogicEnabled = false,
     silentAimEnabled = false,
     silentAimBodyTarget = "Head",
     silentAimMode = "FOV",
@@ -1057,6 +1059,8 @@ if type(tweenMoveSpeed) == "number" then
         if type(playerState.speedChangerValue) == "number" then
             S.speedChangerValue = math.clamp(math.floor(playerState.speedChangerValue + 0.5), 1, 100)
         end
+        S.infiniteOxygenEnabled = playerState.infiniteOxygenEnabled == true
+        S.disableWaterLogicEnabled = playerState.disableWaterLogicEnabled == true
     end
     if type(autoPickupEnabled) == "boolean" then
         S.autoPickupEnabled = autoPickupEnabled
@@ -1122,6 +1126,8 @@ local function serializeState()
         autoBreakFreeEnabled = S.autoBreakFreeEnabled,
         autoGetUpEnabled = S.autoGetUpEnabled,
         equipWhileSwimmingEnabled = S.equipWhileSwimmingEnabled,
+        infiniteOxygenEnabled = S.infiniteOxygenEnabled,
+        disableWaterLogicEnabled = S.disableWaterLogicEnabled,
         silentAimEnabled = S.silentAimEnabled,
         silentAimBodyTarget = S.silentAimBodyTarget,
         silentAimMode = S.silentAimMode,
@@ -1289,6 +1295,12 @@ function applySerializedState(data)
     end
     if type(data.equipWhileSwimmingEnabled) == "boolean" then
         S.equipWhileSwimmingEnabled = data.equipWhileSwimmingEnabled
+    end
+    if type(data.infiniteOxygenEnabled) == "boolean" then
+        S.infiniteOxygenEnabled = data.infiniteOxygenEnabled
+    end
+    if type(data.disableWaterLogicEnabled) == "boolean" then
+        S.disableWaterLogicEnabled = data.disableWaterLogicEnabled
     end
     if type(data.silentAimEnabled) == "boolean" then
         S.silentAimEnabled = data.silentAimEnabled
@@ -6684,6 +6696,8 @@ playerState = {
 	autoBreakFreeEnabled = S.autoBreakFreeEnabled,
 	autoGetUpEnabled = S.autoGetUpEnabled,
 	equipWhileSwimmingEnabled = S.equipWhileSwimmingEnabled,
+	infiniteOxygenEnabled = S.infiniteOxygenEnabled,
+	disableWaterLogicEnabled = S.disableWaterLogicEnabled,
 	displayStamina = 100,
 	hookedNetwork = nil,
 	originalNetworkFireServer = nil,
@@ -6729,6 +6743,10 @@ playerState = {
 	swimCanSwitchWrapper = nil,
 	originalSwimUpdate = nil,
 	swimUpdateWrapper = nil,
+	hookedWaterSharedUtils = nil,
+	originalWaterIsInWater = nil,
+	waterIsInWaterWrapper = nil,
+	waterLogicSwimmingDisabledOwner = nil,
 	cactusTouchDisabledInstances = {},
 	cactusDescendantConnections = {},
 	cactusFoliageAddedConnection = nil,
@@ -6816,6 +6834,8 @@ function applyStoredStateToRuntime()
         playerState.autoBreakFreeEnabled = S.autoBreakFreeEnabled == true
         playerState.autoGetUpEnabled = S.autoGetUpEnabled == true
         playerState.equipWhileSwimmingEnabled = S.equipWhileSwimmingEnabled == true
+        playerState.infiniteOxygenEnabled = S.infiniteOxygenEnabled == true
+        playerState.disableWaterLogicEnabled = S.disableWaterLogicEnabled == true
     end
 
     _G.__AutoMineNoRecoilEnabled = S.noRecoilEnabled == true
@@ -6848,6 +6868,8 @@ function applyStoredStateToRuntime()
     S.instantRobEnabled = S.instantRobEnabled == true
     S.cameraNoclipEnabled = S.cameraNoclipEnabled == true
     S.customCursorEnabled = S.customCursorEnabled ~= false
+    S.infiniteOxygenEnabled = S.infiniteOxygenEnabled == true
+    S.disableWaterLogicEnabled = S.disableWaterLogicEnabled == true
     S.speedChangerEnabled = S.speedChangerEnabled == true
     S.speedChangerValue = math.clamp(math.floor((tonumber(S.speedChangerValue) or PLAYER_SPEED_CHANGER_DEFAULT) + 0.5), PLAYER_SPEED_CHANGER_MIN, PLAYER_SPEED_CHANGER_MAX)
     S.silentAimAccuracy = math.clamp(math.floor((tonumber(S.silentAimAccuracy) or 50) + 0.5), 1, 100)
@@ -12938,6 +12960,8 @@ end
 
 function hasGunFeatureHooksEnabled()
     return playerState.equipWhileSwimmingEnabled
+        or playerState.infiniteOxygenEnabled
+        or playerState.disableWaterLogicEnabled
         or S.silentAimEnabled
         or S.fastProjectileEnabled
         or S.noSpreadEnabled
@@ -14838,6 +14862,19 @@ function restoreEquipWhileSwimmingHooks()
         if playerState.originalSwimUpdate and owner.Update == playerState.swimUpdateWrapper then
             owner.Update = playerState.originalSwimUpdate
         end
+        pcall(function()
+            local human = rawget(owner, "Human") or owner.Human
+            if human and type(human.SetStateEnabled) == "function" then
+                human:SetStateEnabled(Enum.HumanoidStateType.Swimming, true)
+            end
+        end)
+    end
+
+    local sharedUtils = playerState.hookedWaterSharedUtils
+    if isTable(sharedUtils)
+        and playerState.originalWaterIsInWater
+        and sharedUtils.IsInWater == playerState.waterIsInWaterWrapper then
+        sharedUtils.IsInWater = playerState.originalWaterIsInWater
     end
 
     playerState.hookedSwimOwner = nil
@@ -14845,10 +14882,170 @@ function restoreEquipWhileSwimmingHooks()
     playerState.swimCanSwitchWrapper = nil
     playerState.originalSwimUpdate = nil
     playerState.swimUpdateWrapper = nil
+    playerState.hookedWaterSharedUtils = nil
+    playerState.originalWaterIsInWater = nil
+    playerState.waterIsInWaterWrapper = nil
+    playerState.waterLogicSwimmingDisabledOwner = nil
+end
+
+function hasWaterFeatureHooksEnabled()
+    return playerState.equipWhileSwimmingEnabled
+        or playerState.infiniteOxygenEnabled
+        or playerState.disableWaterLogicEnabled
+end
+
+function resolveSharedUtilsModule(forceRefresh)
+    local globalModule = getAutoMineGlobalModule(forceRefresh)
+    if not isTable(globalModule) then
+        return nil
+    end
+
+    local sharedUtils = rawget(globalModule, "SharedUtils") or globalModule.SharedUtils
+    if isTable(sharedUtils) and type(rawget(sharedUtils, "IsInWater") or sharedUtils.IsInWater) == "function" then
+        return sharedUtils
+    end
+
+    if type(globalModule.LoadModule) == "function" then
+        local okLoad, loadedSharedUtils = pcall(function()
+            return globalModule:LoadModule("SharedUtils")
+        end)
+        if okLoad and isTable(loadedSharedUtils) and type(rawget(loadedSharedUtils, "IsInWater") or loadedSharedUtils.IsInWater) == "function" then
+            globalModule.SharedUtils = loadedSharedUtils
+            return loadedSharedUtils
+        end
+    end
+
+    return nil
+end
+
+function setInfiniteOxygenState(owner)
+    if not (playerState.infiniteOxygenEnabled or playerState.disableWaterLogicEnabled) then
+        return
+    end
+
+    local oxygenValue = 100
+    if isTable(owner) and isTable(owner.State) then
+        pcall(function()
+            rawset(owner.State, "Underwater", oxygenValue)
+        end)
+    end
+
+    local replicatedState = resolveGlobalReplicatedState(false) or resolveGlobalReplicatedState(true)
+    if isTable(replicatedState) then
+        if type(replicatedState.LocalSetState) == "function" then
+            pcall(function()
+                replicatedState:LocalSetState("Underwater", oxygenValue)
+            end)
+        end
+        local state = rawget(replicatedState, "State") or replicatedState.State
+        if isTable(state) then
+            pcall(function()
+                rawset(state, "Underwater", oxygenValue)
+            end)
+        end
+    end
+end
+
+function applyDisableWaterLogicState(owner)
+    if not (playerState.disableWaterLogicEnabled and isTable(owner)) then
+        return
+    end
+
+    owner.Swimming = false
+    local swimForce = rawget(owner, "SwimForce") or owner.SwimForce
+    if swimForce then
+        pcall(function()
+            swimForce.Enabled = false
+        end)
+        pcall(function()
+            swimForce:Destroy()
+        end)
+        owner.SwimForce = nil
+    end
+    local swimAtt = rawget(owner, "SwimAtt") or owner.SwimAtt
+    if swimAtt then
+        pcall(function()
+            swimAtt:Destroy()
+        end)
+        owner.SwimAtt = nil
+    end
+
+    local human = rawget(owner, "Human") or owner.Human
+    if human then
+        pcall(function()
+            human:SetStateEnabled(Enum.HumanoidStateType.Swimming, false)
+        end)
+        playerState.waterLogicSwimmingDisabledOwner = owner
+        pcall(function()
+            if human:GetState() == Enum.HumanoidStateType.Swimming then
+                human:ChangeState(Enum.HumanoidStateType.Running)
+            end
+        end)
+    end
+end
+
+function restoreDisableWaterLogicState(owner)
+    local targetOwner = isTable(owner) and owner or playerState.waterLogicSwimmingDisabledOwner
+    if not isTable(targetOwner) then
+        playerState.waterLogicSwimmingDisabledOwner = nil
+        return
+    end
+
+    local human = rawget(targetOwner, "Human") or targetOwner.Human
+    if human and type(human.SetStateEnabled) == "function" then
+        pcall(function()
+            human:SetStateEnabled(Enum.HumanoidStateType.Swimming, true)
+        end)
+    end
+    if targetOwner == playerState.waterLogicSwimmingDisabledOwner then
+        playerState.waterLogicSwimmingDisabledOwner = nil
+    end
+end
+
+function ensureWaterSharedUtilsHook()
+    if not playerState.disableWaterLogicEnabled then
+        local sharedUtils = playerState.hookedWaterSharedUtils
+        if isTable(sharedUtils)
+            and playerState.originalWaterIsInWater
+            and sharedUtils.IsInWater == playerState.waterIsInWaterWrapper then
+            sharedUtils.IsInWater = playerState.originalWaterIsInWater
+        end
+        playerState.hookedWaterSharedUtils = nil
+        playerState.originalWaterIsInWater = nil
+        playerState.waterIsInWaterWrapper = nil
+        return
+    end
+
+    local sharedUtils = resolveSharedUtilsModule(false) or resolveSharedUtilsModule(true)
+    if not isTable(sharedUtils) then
+        return
+    end
+
+    local isInWater = rawget(sharedUtils, "IsInWater") or sharedUtils.IsInWater
+    if type(isInWater) ~= "function" then
+        return
+    end
+    if sharedUtils ~= playerState.hookedWaterSharedUtils or isInWater ~= playerState.waterIsInWaterWrapper then
+        local previous = playerState.hookedWaterSharedUtils
+        if isTable(previous)
+            and playerState.originalWaterIsInWater
+            and previous.IsInWater == playerState.waterIsInWaterWrapper then
+            previous.IsInWater = playerState.originalWaterIsInWater
+        end
+        playerState.hookedWaterSharedUtils = sharedUtils
+        playerState.originalWaterIsInWater = isInWater
+        playerState.waterIsInWaterWrapper = function(...)
+            if playerState.disableWaterLogicEnabled then
+                return false
+            end
+            return playerState.originalWaterIsInWater(...)
+        end
+        sharedUtils.IsInWater = playerState.waterIsInWaterWrapper
+    end
 end
 
 function ensureEquipWhileSwimmingHooks()
-    if not playerState.equipWhileSwimmingEnabled then
+    if not hasWaterFeatureHooksEnabled() then
         return
     end
 
@@ -14865,7 +15062,7 @@ function ensureEquipWhileSwimmingHooks()
     if type(canSwitch) == "function" and canSwitch ~= playerState.swimCanSwitchWrapper then
         playerState.originalSwimCanSwitchToItem = canSwitch
         playerState.swimCanSwitchWrapper = function(self, ...)
-            if playerState.equipWhileSwimmingEnabled and type(self) == "table" then
+            if (playerState.equipWhileSwimmingEnabled or playerState.disableWaterLogicEnabled) and type(self) == "table" then
                 self.Swimming = false
             end
             return playerState.originalSwimCanSwitchToItem(self, ...)
@@ -14877,13 +15074,38 @@ function ensureEquipWhileSwimmingHooks()
     if type(updateFn) == "function" and updateFn ~= playerState.swimUpdateWrapper then
         playerState.originalSwimUpdate = updateFn
         playerState.swimUpdateWrapper = function(self, ...)
-            if playerState.equipWhileSwimmingEnabled and type(self) == "table" then
-                self.Swimming = false
+            if hasWaterFeatureHooksEnabled() and type(self) == "table" then
+                if playerState.equipWhileSwimmingEnabled or playerState.disableWaterLogicEnabled then
+                    self.Swimming = false
+                end
+                setInfiniteOxygenState(self)
+                applyDisableWaterLogicState(self)
+                if not playerState.disableWaterLogicEnabled then
+                    restoreDisableWaterLogicState(self)
+                end
             end
-            return playerState.originalSwimUpdate(self, ...)
+            local results = table.pack(playerState.originalSwimUpdate(self, ...))
+            if hasWaterFeatureHooksEnabled() and type(self) == "table" then
+                if playerState.equipWhileSwimmingEnabled or playerState.disableWaterLogicEnabled then
+                    self.Swimming = false
+                end
+                setInfiniteOxygenState(self)
+                applyDisableWaterLogicState(self)
+                if not playerState.disableWaterLogicEnabled then
+                    restoreDisableWaterLogicState(self)
+                end
+            end
+            return table.unpack(results, 1, results.n)
         end
         owner.Update = playerState.swimUpdateWrapper
     end
+
+    setInfiniteOxygenState(owner)
+    applyDisableWaterLogicState(owner)
+    if not playerState.disableWaterLogicEnabled then
+        restoreDisableWaterLogicState(owner)
+    end
+    ensureWaterSharedUtilsHook()
 end
 
 function setNoRecoilGuardState(isEnabled)
@@ -15743,7 +15965,7 @@ end
 function ensureGunFeatureHooks()
     setNoRecoilGuardState(S.noRecoilEnabled == true)
 
-    if playerState.equipWhileSwimmingEnabled then
+    if hasWaterFeatureHooksEnabled() then
         ensureEquipWhileSwimmingHooks()
     else
         restoreEquipWhileSwimmingHooks()
@@ -15809,7 +16031,7 @@ function ensureGunFeatureHooks()
 end
 
 function runGunFeaturePulse()
-    if playerState.equipWhileSwimmingEnabled then
+    if hasWaterFeatureHooksEnabled() then
         ensureEquipWhileSwimmingHooks()
     end
     if S.noRecoilEnabled then
@@ -28337,6 +28559,14 @@ function setEquipWhileSwimmingEnabled(isEnabled)
 	return setPlayerFeatureFlag("equipWhileSwimmingEnabled", isEnabled, "equip while swimming")
 end
 
+function setInfiniteOxygenEnabled(isEnabled)
+	return setPlayerFeatureFlag("infiniteOxygenEnabled", isEnabled, "infinite oxygen")
+end
+
+function setDisableWaterLogicEnabled(isEnabled)
+	return setPlayerFeatureFlag("disableWaterLogicEnabled", isEnabled, "disable water logic")
+end
+
 function setSilentAimEnabled(isEnabled)
 	return setSFeatureFlag("silentAimEnabled", isEnabled, "silent aim")
 end
@@ -34594,6 +34824,8 @@ function __westwareBuildPlayerTab()
     createBoundToggleRow("No Ragdoll", elementsList, playerState, "noRagdollEnabled", setNoRagdollEnabled)
     createBoundToggleRow("Auto Break Lasso", elementsList, playerState, "autoBreakFreeEnabled", setAutoBreakFreeEnabled)
     createBoundToggleRow("Auto Get Up", elementsList, playerState, "autoGetUpEnabled", setAutoGetUpEnabled)
+    createBoundToggleRow("Infinite Oxygen", elementsList, playerState, "infiniteOxygenEnabled", setInfiniteOxygenEnabled)
+    createBoundToggleRow("Disable Water Logic", elementsList, playerState, "disableWaterLogicEnabled", setDisableWaterLogicEnabled)
     createBoundToggleRow("Equip while swimming", elementsList, playerState, "equipWhileSwimmingEnabled", setEquipWhileSwimmingEnabled)
 
     local playerRowsInitialized = false
