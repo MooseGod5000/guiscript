@@ -274,6 +274,7 @@ local DEFAULTS = {
     horseInfiniteStaminaEnabled = false,
     horseNoWaterSlowEnabled = false,
     horseAntiRagdollEnabled = false,
+    horseOrbitEnabled = false,
     silentAimEnabled = false,
     silentAimBodyTarget = "Head",
     silentAimMode = "FOV",
@@ -1067,6 +1068,7 @@ if type(tweenMoveSpeed) == "number" then
         S.horseInfiniteStaminaEnabled = playerState.horseInfiniteStaminaEnabled == true
         S.horseNoWaterSlowEnabled = playerState.horseNoWaterSlowEnabled == true
         S.horseAntiRagdollEnabled = playerState.horseAntiRagdollEnabled == true
+        S.horseOrbitEnabled = playerState.horseOrbitEnabled == true
     end
     if type(autoPickupEnabled) == "boolean" then
         S.autoPickupEnabled = autoPickupEnabled
@@ -1137,6 +1139,7 @@ local function serializeState()
         horseInfiniteStaminaEnabled = S.horseInfiniteStaminaEnabled,
         horseNoWaterSlowEnabled = S.horseNoWaterSlowEnabled,
         horseAntiRagdollEnabled = S.horseAntiRagdollEnabled,
+        horseOrbitEnabled = S.horseOrbitEnabled,
         silentAimEnabled = S.silentAimEnabled,
         silentAimBodyTarget = S.silentAimBodyTarget,
         silentAimMode = S.silentAimMode,
@@ -1319,6 +1322,9 @@ function applySerializedState(data)
     end
     if type(data.horseAntiRagdollEnabled) == "boolean" then
         S.horseAntiRagdollEnabled = data.horseAntiRagdollEnabled
+    end
+    if type(data.horseOrbitEnabled) == "boolean" then
+        S.horseOrbitEnabled = data.horseOrbitEnabled
     end
     if type(data.silentAimEnabled) == "boolean" then
         S.silentAimEnabled = data.silentAimEnabled
@@ -6719,6 +6725,7 @@ playerState = {
 	horseInfiniteStaminaEnabled = S.horseInfiniteStaminaEnabled,
 	horseNoWaterSlowEnabled = S.horseNoWaterSlowEnabled,
 	horseAntiRagdollEnabled = S.horseAntiRagdollEnabled,
+	horseOrbitEnabled = S.horseOrbitEnabled,
 	displayStamina = 100,
 	hookedNetwork = nil,
 	originalNetworkFireServer = nil,
@@ -6772,6 +6779,14 @@ playerState = {
 	horseNoWaterSlowOriginalSpeeds = {},
 	horseAntiRagdollConnection = nil,
 	horseAntiRagdollHooks = {},
+	horseOrbitConnection = nil,
+	horseOrbitWasActive = false,
+	horseOrbitAngle = 0,
+	horseOrbitLastAnimal = nil,
+	horseOrbitSeatJoint = nil,
+	horseOrbitSeatPart1 = nil,
+	horseOrbitSeatWasEnabled = nil,
+	horseOrbitSavedPlayerState = nil,
 	cactusTouchDisabledInstances = {},
 	cactusDescendantConnections = {},
 	cactusFoliageAddedConnection = nil,
@@ -6864,6 +6879,7 @@ function applyStoredStateToRuntime()
         playerState.horseInfiniteStaminaEnabled = S.horseInfiniteStaminaEnabled == true
         playerState.horseNoWaterSlowEnabled = S.horseNoWaterSlowEnabled == true
         playerState.horseAntiRagdollEnabled = S.horseAntiRagdollEnabled == true
+        playerState.horseOrbitEnabled = S.horseOrbitEnabled == true
     end
 
     _G.__AutoMineNoRecoilEnabled = S.noRecoilEnabled == true
@@ -24948,6 +24964,7 @@ function hasPlayerStateNetworkHookEnabled()
         or playerState.noFallDamageEnabled
         or playerState.noDamageSelfEnabled
         or playerState.horseAntiRagdollEnabled
+        or playerState.horseOrbitEnabled
         or S.silentAimEnabled
         or S.fastProjectileEnabled
         or S.noSpreadEnabled
@@ -24965,6 +24982,7 @@ function hasPlayerStateFeatureHooksEnabled()
 		or playerState.horseInfiniteStaminaEnabled
 		or playerState.horseNoWaterSlowEnabled
 		or playerState.horseAntiRagdollEnabled
+		or playerState.horseOrbitEnabled
         or playerState.equipWhileSwimmingEnabled
         or hasGunFeatureHooksEnabled()
 end
@@ -24982,7 +25000,7 @@ function shouldBlockPlayerStateRemote(remoteName)
 		return true
 	end
 
-	if playerState.horseAntiRagdollEnabled and (remoteName == "HorseTrip" or remoteName == "AnimalKnockOut") then
+	if (playerState.horseAntiRagdollEnabled or playerState.horseOrbitEnabled) and (remoteName == "HorseTrip" or remoteName == "AnimalKnockOut") then
 		return true
 	end
 
@@ -25294,7 +25312,7 @@ function installHorseAntiRagdollHook(ridingAnimal)
 		originalKnockOut = originalKnockOut,
 	}
 	hook.knockOutWrapper = function(self, ...)
-		if playerState.horseAntiRagdollEnabled then
+		if playerState.horseAntiRagdollEnabled or playerState.horseOrbitEnabled then
 			clearHorseRagdollState(isTable(self) and self or ridingAnimal)
 			return nil
 		end
@@ -25350,6 +25368,452 @@ function ensureHorseAntiRagdollHooks()
 			return
 		end
 		installHorseAntiRagdollHook(resolveRidingAnimal(false) or resolveRidingAnimal(true))
+	end)
+end
+
+HORSE_ORBIT_RADIUS = 12
+HORSE_ORBIT_ANGULAR_SPEED = 1.65
+HORSE_ORBIT_GROUND_RAY_HEIGHT = 34
+HORSE_ORBIT_GROUND_RAY_DEPTH = 90
+HORSE_ORBIT_MIN_HOVER_HEIGHT = 2.4
+HORSE_ORBIT_MAX_SPEED = 34
+HORSE_ORBIT_SNAP_DISTANCE = 16
+
+function getHorseOrbitRoot(ridingAnimal)
+	if not isTable(ridingAnimal) then
+		return nil
+	end
+
+	local hrp = rawget(ridingAnimal, "hrp") or ridingAnimal.hrp
+	if typeof(hrp) == "Instance" and hrp:IsA("BasePart") then
+		return hrp
+	end
+
+	local character = rawget(ridingAnimal, "character") or ridingAnimal.character
+	if typeof(character) == "Instance" then
+		local root = character:FindFirstChild("HumanoidRootPart") or character.PrimaryPart
+		if typeof(root) == "Instance" and root:IsA("BasePart") then
+			return root
+		end
+	end
+
+	return nil
+end
+
+function getHorseOrbitTargetY(targetPosition, ridingAnimal, character, horseRoot)
+	local fallbackY = horseRoot and horseRoot.Position.Y or targetPosition.Y
+	local okParams, raycastParams = pcall(RaycastParams.new)
+	if not okParams or not raycastParams then
+		return fallbackY
+	end
+
+	local filter = {}
+	if typeof(character) == "Instance" then
+		table.insert(filter, character)
+	end
+	local animalCharacter = isTable(ridingAnimal) and (rawget(ridingAnimal, "character") or ridingAnimal.character) or nil
+	if typeof(animalCharacter) == "Instance" then
+		table.insert(filter, animalCharacter)
+	end
+	local ignore = workspace:FindFirstChild("Ignore")
+	if ignore then
+		table.insert(filter, ignore)
+	end
+
+	raycastParams.FilterDescendantsInstances = filter
+	pcall(function()
+		raycastParams.FilterType = Enum.RaycastFilterType.Exclude
+	end)
+	pcall(function()
+		raycastParams.RespectCanCollide = true
+	end)
+
+	local origin = Vector3.new(targetPosition.X, fallbackY + HORSE_ORBIT_GROUND_RAY_HEIGHT, targetPosition.Z)
+	local result = workspace:Raycast(origin, Vector3.new(0, -HORSE_ORBIT_GROUND_RAY_DEPTH, 0), raycastParams)
+	if result then
+		local hoverHeight = HORSE_ORBIT_MIN_HOVER_HEIGHT
+		if horseRoot then
+			hoverHeight = math.max(hoverHeight, horseRoot.Size.Y * 0.5)
+		end
+		return result.Position.Y + hoverHeight
+	end
+
+	return fallbackY
+end
+
+function detachHorseOrbitSeat(rootPart)
+	if not rootPart then
+		return
+	end
+
+	local seatJoint = rootPart:FindFirstChild("Animal_To_Player")
+	if not seatJoint then
+		return
+	end
+
+	if playerState.horseOrbitSeatJoint ~= seatJoint then
+		playerState.horseOrbitSeatJoint = seatJoint
+		local okPart1, part1 = pcall(function()
+			return seatJoint.Part1
+		end)
+		playerState.horseOrbitSeatPart1 = okPart1 and part1 or nil
+		local okEnabled, enabled = pcall(function()
+			return seatJoint.Enabled
+		end)
+		playerState.horseOrbitSeatWasEnabled = okEnabled and enabled or nil
+	end
+
+	pcall(function()
+		seatJoint.Part1 = nil
+	end)
+	pcall(function()
+		seatJoint.Enabled = false
+	end)
+end
+
+function setHorseOrbitCharacterMassless(character, isMassless)
+	if typeof(character) ~= "Instance" then
+		return
+	end
+
+	for _, descendant in ipairs(character:GetDescendants()) do
+		if descendant:IsA("BasePart") then
+			pcall(function()
+				descendant.Massless = isMassless
+			end)
+		end
+	end
+end
+
+function clearHorseOrbitPlayerStateFlags(playerCharacter)
+	if not isTable(playerCharacter) then
+		return
+	end
+
+	local state = rawget(playerCharacter, "State") or playerCharacter.State
+	if not isTable(state) then
+		return
+	end
+
+	if not playerState.horseOrbitSavedPlayerState or playerState.horseOrbitSavedPlayerState.state ~= state then
+		playerState.horseOrbitSavedPlayerState = {
+			state = state,
+			OnAnimal = rawget(state, "OnAnimal"),
+			PassengerOf = rawget(state, "PassengerOf"),
+			Seated = rawget(state, "Seated"),
+		}
+	end
+
+	pcall(function()
+		rawset(state, "OnAnimal", nil)
+		rawset(state, "PassengerOf", nil)
+		rawset(state, "Seated", false)
+	end)
+end
+
+function restoreHorseOrbitPlayerStateFlags(shouldRestoreMountedState)
+	local savedState = playerState.horseOrbitSavedPlayerState
+	if isTable(savedState) and isTable(savedState.state) then
+		pcall(function()
+			if shouldRestoreMountedState then
+				rawset(savedState.state, "OnAnimal", savedState.OnAnimal)
+				rawset(savedState.state, "PassengerOf", savedState.PassengerOf)
+				rawset(savedState.state, "Seated", savedState.Seated)
+			else
+				rawset(savedState.state, "OnAnimal", nil)
+				rawset(savedState.state, "PassengerOf", nil)
+				rawset(savedState.state, "Seated", false)
+			end
+		end)
+	end
+	playerState.horseOrbitSavedPlayerState = nil
+end
+
+function applyHorseOrbitFreePlayerState(character, rootPart, humanoid)
+	detachHorseOrbitSeat(rootPart)
+
+	if rootPart then
+		pcall(function()
+			rootPart.CollisionGroup = "PlayerCharacters"
+		end)
+	end
+	if humanoid then
+		pcall(function()
+			humanoid.PlatformStand = false
+			humanoid.Sit = false
+			humanoid:ChangeState(Enum.HumanoidStateType.Running)
+		end)
+		if humanoid.WalkSpeed < 16 then
+			humanoid.WalkSpeed = 16
+		end
+		local controls = getLocalPlayerControls()
+		if controls and type(controls.GetMoveVector) == "function" then
+			local okMove, moveVector = pcall(controls.GetMoveVector, controls)
+			if okMove and typeof(moveVector) == "Vector3" then
+				pcall(function()
+					humanoid:Move(moveVector, true)
+				end)
+			end
+		end
+	end
+
+	setHorseOrbitCharacterMassless(character, false)
+
+	local playerCharacter = resolvePlayerCharacterModule(false) or resolvePlayerCharacterModule(true)
+	if isTable(playerCharacter) then
+		clearHorseOrbitPlayerStateFlags(playerCharacter)
+		local animationHandler = rawget(playerCharacter, "AnimationHandler") or playerCharacter.AnimationHandler
+		if isTable(animationHandler) then
+			pcall(function()
+				animationHandler:StopTrack("RideAnimal", 0.05)
+			end)
+			pcall(function()
+				animationHandler:StopTrack("GetOnHorse", 0.05)
+			end)
+		end
+	end
+end
+
+function restoreHorseOrbitPlayerAttachment(shouldRestoreMountedState)
+	local character = getWorldCharacterForPlayer(localPlayer) or (localPlayer and localPlayer.Character)
+	local rootPart = getRootPart(character)
+	local humanoid = getCharacterHumanoid(character)
+	local canRestoreMountedAttachment = shouldRestoreMountedState
+		and playerState.horseOrbitSeatJoint ~= nil
+		and playerState.horseOrbitSeatPart1 ~= nil
+
+	if canRestoreMountedAttachment then
+		local seatJoint = playerState.horseOrbitSeatJoint
+		if seatJoint then
+			pcall(function()
+				if playerState.horseOrbitSeatPart1 then
+					seatJoint.Part1 = playerState.horseOrbitSeatPart1
+				end
+			end)
+			pcall(function()
+				seatJoint.Enabled = playerState.horseOrbitSeatWasEnabled ~= false
+			end)
+		end
+		if rootPart then
+			pcall(function()
+				rootPart.CollisionGroup = "SeatedPlayers"
+			end)
+		end
+		if humanoid then
+			pcall(function()
+				humanoid:ChangeState(Enum.HumanoidStateType.Physics)
+			end)
+		end
+		setHorseOrbitCharacterMassless(character, true)
+	else
+		if rootPart then
+			detachHorseOrbitSeat(rootPart)
+			pcall(function()
+				rootPart.CollisionGroup = "PlayerCharacters"
+			end)
+		end
+		if humanoid then
+			pcall(function()
+				humanoid.PlatformStand = false
+				humanoid.Sit = false
+				humanoid:ChangeState(Enum.HumanoidStateType.Running)
+			end)
+		end
+		setHorseOrbitCharacterMassless(character, false)
+	end
+
+	restoreHorseOrbitPlayerStateFlags(canRestoreMountedAttachment)
+	playerState.horseOrbitSeatJoint = nil
+	playerState.horseOrbitSeatPart1 = nil
+	playerState.horseOrbitSeatWasEnabled = nil
+	return canRestoreMountedAttachment
+end
+
+function applyHorseOrbitAnimalMotion(ridingAnimal, character, rootPart, dt)
+	local horseRoot = getHorseOrbitRoot(ridingAnimal)
+	if not horseRoot or not rootPart then
+		return false
+	end
+
+	if playerState.horseOrbitLastAnimal ~= ridingAnimal then
+		local delta = horseRoot.Position - rootPart.Position
+		local flatDelta = Vector3.new(delta.X, 0, delta.Z)
+		if flatDelta.Magnitude > 0.1 then
+			playerState.horseOrbitAngle = math.atan2(flatDelta.Z, flatDelta.X)
+		else
+			playerState.horseOrbitAngle = 0
+		end
+		playerState.horseOrbitLastAnimal = ridingAnimal
+	end
+
+	local dtSeconds = math.clamp(tonumber(dt) or (1 / 60), 1 / 240, 1 / 15)
+	local angle = ((tonumber(playerState.horseOrbitAngle) or 0) + HORSE_ORBIT_ANGULAR_SPEED * dtSeconds) % (math.pi * 2)
+	playerState.horseOrbitAngle = angle
+
+	local offset = Vector3.new(math.cos(angle) * HORSE_ORBIT_RADIUS, 0, math.sin(angle) * HORSE_ORBIT_RADIUS)
+	local tangent = Vector3.new(-math.sin(angle), 0, math.cos(angle))
+	if tangent.Magnitude <= 0.001 then
+		tangent = Vector3.new(0, 0, -1)
+	end
+	tangent = tangent.Unit
+
+	local targetPosition = rootPart.Position + offset
+	targetPosition = Vector3.new(targetPosition.X, getHorseOrbitTargetY(targetPosition, ridingAnimal, character, horseRoot), targetPosition.Z)
+	local targetCFrame = CFrame.new(targetPosition, targetPosition + tangent)
+	local orbitSpeed = HORSE_ORBIT_RADIUS * HORSE_ORBIT_ANGULAR_SPEED
+	local horizontalError = Vector3.new(targetPosition.X - horseRoot.Position.X, 0, targetPosition.Z - horseRoot.Position.Z)
+	local orbitVelocity = tangent * orbitSpeed + horizontalError * 5
+	if orbitVelocity.Magnitude > HORSE_ORBIT_MAX_SPEED then
+		orbitVelocity = orbitVelocity.Unit * HORSE_ORBIT_MAX_SPEED
+	end
+	local verticalError = math.abs(targetPosition.Y - horseRoot.Position.Y)
+	local shouldSnap = horizontalError.Magnitude > HORSE_ORBIT_SNAP_DISTANCE or verticalError > 8
+	local facingCFrame = shouldSnap and targetCFrame or CFrame.new(horseRoot.Position, horseRoot.Position + tangent)
+
+	pcall(function()
+		ridingAnimal.Movement = nil
+		ridingAnimal.Walking = false
+		ridingAnimal.InputReleased = nil
+		ridingAnimal.WalkSpeedGoal = orbitSpeed
+		ridingAnimal.WalkSpeed = orbitSpeed
+		ridingAnimal.Swimming = false
+		ridingAnimal.Falling = false
+		ridingAnimal.lastgrounded = true
+		ridingAnimal.DirectionVector = tangent
+	end)
+	if type(ridingAnimal.SetDirectionVector) == "function" then
+		pcall(function()
+			ridingAnimal:SetDirectionVector(tangent)
+		end)
+	end
+	if type(ridingAnimal.SetMovementState) == "function" then
+		pcall(function()
+			ridingAnimal:SetMovementState("Canter")
+		end)
+	end
+	if type(ridingAnimal.SetMovementAnimationSpeed) == "function" then
+		pcall(function()
+			ridingAnimal:SetMovementAnimationSpeed(1.2)
+		end)
+	end
+	if type(ridingAnimal.DisconnectCollision) == "function" then
+		pcall(function()
+			ridingAnimal:DisconnectCollision()
+		end)
+	end
+	installHorseAntiRagdollHook(ridingAnimal)
+	clearHorseRagdollState(ridingAnimal)
+
+	pcall(function()
+		horseRoot.CFrame = facingCFrame
+	end)
+	pcall(function()
+		horseRoot.AssemblyLinearVelocity = Vector3.new(orbitVelocity.X, 0, orbitVelocity.Z)
+	end)
+	pcall(function()
+		horseRoot.Velocity = Vector3.new(orbitVelocity.X, 0, orbitVelocity.Z)
+	end)
+
+	local bodyGyro = rawget(ridingAnimal, "bg") or ridingAnimal.bg
+	if bodyGyro then
+		pcall(function()
+			bodyGyro.MaxTorque = ridingAnimal.bgtorque or Vector3.new(10000, 10000, 10000)
+			bodyGyro.CFrame = targetCFrame
+		end)
+	end
+	local bodyVelocity = rawget(ridingAnimal, "bv") or ridingAnimal.bv
+	if bodyVelocity then
+		pcall(function()
+			bodyVelocity.MaxForce = ridingAnimal.bvforce or Vector3.new(50000, 0, 50000)
+			bodyVelocity.Velocity = Vector3.new(orbitVelocity.X, 0, orbitVelocity.Z)
+		end)
+	end
+
+	pcall(function()
+		ridingAnimal.LastRootCFrame = facingCFrame
+		ridingAnimal.ApplyServerCFrameIfCFrameIs = nil
+	end)
+	return true
+end
+
+function applyHorseOrbitPulse(dt)
+	local ridingAnimal = resolveRidingAnimal(false) or resolveRidingAnimal(true)
+	if not ridingAnimal then
+		restoreHorseOrbitPlayerAttachment(false)
+		pushDebugRateLimited("horse_orbit_waiting_for_mount", "horse orbit: mount a horse first", 4)
+		return false
+	end
+
+	local character = getWorldCharacterForPlayer(localPlayer) or (localPlayer and localPlayer.Character)
+	local rootPart = getRootPart(character)
+	local humanoid = getCharacterHumanoid(character)
+	if not rootPart then
+		return false
+	end
+
+	playerState.horseOrbitWasActive = true
+	applyHorseOrbitFreePlayerState(character, rootPart, humanoid)
+	return applyHorseOrbitAnimalMotion(ridingAnimal, character, rootPart, dt)
+end
+
+function restoreHorseOrbitHooks()
+	local connection = playerState.horseOrbitConnection
+	if connection then
+		pcall(function()
+			connection:Disconnect()
+		end)
+	end
+	playerState.horseOrbitConnection = nil
+
+	local hadActiveOrbit = playerState.horseOrbitWasActive
+		or playerState.horseOrbitSeatJoint ~= nil
+		or playerState.horseOrbitLastAnimal ~= nil
+		or playerState.horseOrbitSavedPlayerState ~= nil
+	if not hadActiveOrbit then
+		return
+	end
+
+	local ridingAnimal = resolveRidingAnimal(false)
+	local shouldRestoreMountedState = isTable(ridingAnimal)
+	local restoredMountedAttachment = restoreHorseOrbitPlayerAttachment(shouldRestoreMountedState)
+
+	if isTable(ridingAnimal) then
+		pcall(function()
+			ridingAnimal.Movement = restoredMountedAttachment and Vector3.new() or nil
+			ridingAnimal.WalkSpeedGoal = 0
+			ridingAnimal.WalkSpeed = 0
+			ridingAnimal.bv.MaxForce = ridingAnimal.bvforce or Vector3.new(50000, 0, 50000)
+			ridingAnimal.bv.Velocity = Vector3.new()
+			ridingAnimal.bg.MaxTorque = ridingAnimal.bgtorque or Vector3.new(10000, 10000, 10000)
+		end)
+		if type(ridingAnimal.ConnectCollision) == "function" then
+			pcall(function()
+				ridingAnimal:ConnectCollision()
+			end)
+		end
+	end
+
+	playerState.horseOrbitLastAnimal = nil
+	playerState.horseOrbitWasActive = false
+end
+
+function ensureHorseOrbitHooks()
+	if not playerState.horseOrbitEnabled then
+		return
+	end
+
+	applyHorseOrbitPulse(1 / 60)
+
+	if playerState.horseOrbitConnection then
+		return
+	end
+
+	playerState.horseOrbitConnection = _RunService.Heartbeat:Connect(function(dt)
+		if not isSessionActive() or not playerState.horseOrbitEnabled then
+			restoreHorseOrbitHooks()
+			return
+		end
+		applyHorseOrbitPulse(dt)
 	end)
 end
 
@@ -26097,6 +26561,12 @@ function ensurePlayerFeatureHooks()
 		restoreHorseAntiRagdollHooks()
 	end
 
+	if playerState.horseOrbitEnabled then
+		ensureHorseOrbitHooks()
+	else
+		restoreHorseOrbitHooks()
+	end
+
 	if playerState.noCactusDamageEnabled then
 		ensureNoCactusDamageHooks()
 	else
@@ -26143,6 +26613,9 @@ function ensurePlayerFeatureHooks()
 				if playerState.horseAntiRagdollEnabled then
 					ensureHorseAntiRagdollHooks()
 				end
+				if playerState.horseOrbitEnabled then
+					ensureHorseOrbitHooks()
+				end
 				if playerState.noCactusDamageEnabled then
 					ensureNoCactusDamageHooks()
 				end
@@ -26161,6 +26634,7 @@ function ensurePlayerFeatureHooks()
 			restoreHorseInfiniteStaminaHooks()
 			restoreHorseNoWaterSlowHooks()
 			restoreHorseAntiRagdollHooks()
+			restoreHorseOrbitHooks()
 			restoreNoCactusDamageHooks()
             restoreAutoBreakFreeHooks()
             restoreGunFeatureHooks()
@@ -28857,6 +29331,10 @@ end
 
 function setHorseAntiRagdollEnabled(isEnabled)
 	return setPlayerFeatureFlag("horseAntiRagdollEnabled", isEnabled, "horse anti ragdoll")
+end
+
+function setHorseOrbitEnabled(isEnabled)
+	return setPlayerFeatureFlag("horseOrbitEnabled", isEnabled, "horse orbit")
 end
 
 function setSpeedChangerValue(value, skipPersistence)
@@ -35178,6 +35656,7 @@ function __westwareBuildPlayerTab()
     createBoundToggleRow("Infinite Stamina", horseList, playerState, "horseInfiniteStaminaEnabled", setHorseInfiniteStaminaEnabled)
     createBoundToggleRow("No water slow", horseList, playerState, "horseNoWaterSlowEnabled", setHorseNoWaterSlowEnabled)
     createBoundToggleRow("Anti ragdoll", horseList, playerState, "horseAntiRagdollEnabled", setHorseAntiRagdollEnabled)
+    createBoundToggleRow("Horse Orbit", horseList, playerState, "horseOrbitEnabled", setHorseOrbitEnabled)
 
     local playerRowsInitialized = false
     local function syncPlayerRows()
