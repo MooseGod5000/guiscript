@@ -260,6 +260,8 @@ local DEFAULTS = {
     safeTeleportEnabled = false,
     noJumpCooldownEnabled = false,
     noRollCooldownEnabled = false,
+    speedChangerEnabled = false,
+    speedChangerValue = 20,
     noFallDamageEnabled = false,
     noDamageSelfEnabled = false,
     noCactusDamageEnabled = false,
@@ -1050,6 +1052,12 @@ if type(tweenMoveSpeed) == "number" then
     if type(undergroundRollTrack) == "string" then
         S.undergroundRollTrack = normalizeUndergroundRollTrack(undergroundRollTrack)
     end
+    if type(playerState) == "table" then
+        S.speedChangerEnabled = playerState.speedChangerEnabled == true
+        if type(playerState.speedChangerValue) == "number" then
+            S.speedChangerValue = math.clamp(math.floor(playerState.speedChangerValue + 0.5), 1, 100)
+        end
+    end
     if type(autoPickupEnabled) == "boolean" then
         S.autoPickupEnabled = autoPickupEnabled
     end
@@ -1105,6 +1113,8 @@ local function serializeState()
         safeTeleportEnabled = S.safeTeleportEnabled,
         noJumpCooldownEnabled = S.noJumpCooldownEnabled,
         noRollCooldownEnabled = S.noRollCooldownEnabled,
+        speedChangerEnabled = S.speedChangerEnabled,
+        speedChangerValue = S.speedChangerValue,
         noFallDamageEnabled = false,
         noDamageSelfEnabled = S.noDamageSelfEnabled,
         noCactusDamageEnabled = S.noCactusDamageEnabled,
@@ -1249,6 +1259,12 @@ function applySerializedState(data)
     end
     if type(data.noRollCooldownEnabled) == "boolean" then
         S.noRollCooldownEnabled = data.noRollCooldownEnabled
+    end
+    if type(data.speedChangerEnabled) == "boolean" then
+        S.speedChangerEnabled = data.speedChangerEnabled
+    end
+    if type(data.speedChangerValue) == "number" then
+        S.speedChangerValue = math.clamp(math.floor(data.speedChangerValue + 0.5), 1, 100)
     end
     if type(data.noFallDamageEnabled) == "boolean" then
         if data.noFallDamageEnabled == true and data.noDamageSelfEnabled == nil then
@@ -6317,6 +6333,13 @@ MOVE_SIDE_DEADZONE = 0.2
 TWEEN_MOVE_SPEED = 20
 TWEEN_SPEED_MIN = 1
 TWEEN_SPEED_MAX = 90
+PLAYER_SPEED_CHANGER_MIN = 1
+PLAYER_SPEED_CHANGER_MAX = 100
+PLAYER_SPEED_CHANGER_DEFAULT = 20
+PLAYER_SPEED_CHANGER_WALKSPEED_CAP = 34
+PLAYER_SPEED_CHANGER_ACCEL = 115
+PLAYER_SPEED_CHANGER_RUBBERBAND_BACKOFF_SECONDS = 1.6
+PLAYER_SPEED_CHANGER_RUBBERBAND_BACKOFF_MULTIPLIER = 0.65
 CFRAME_SPEED_MAX = 300
 CFRAME_FLY_SPEED_MAX = 300
 CFRAME_FLY_OFFSET_MIN = 1
@@ -6652,6 +6675,8 @@ playerState = {
 	safeTeleportEnabled = S.safeTeleportEnabled,
 	noJumpCooldownEnabled = S.noJumpCooldownEnabled,
 	noRollCooldownEnabled = S.noRollCooldownEnabled,
+	speedChangerEnabled = S.speedChangerEnabled,
+	speedChangerValue = S.speedChangerValue,
 	noFallDamageEnabled = S.noFallDamageEnabled,
 	noDamageSelfEnabled = S.noDamageSelfEnabled,
 	noCactusDamageEnabled = S.noCactusDamageEnabled,
@@ -6672,6 +6697,12 @@ playerState = {
 	noRollCooldownRollWrapper = nil,
 	originalNoRollCooldownStopRoll = nil,
 	noRollCooldownStopRollWrapper = nil,
+	speedChangerConnection = nil,
+	speedChangerLastFlatPosition = nil,
+	speedChangerLastMoveDirection = nil,
+	speedChangerBackoffUntil = 0,
+	speedChangerBackoffSpeed = nil,
+	speedChangerLastRubberBandAt = 0,
 	breakFreeOwner = nil,
 	breakFreeHook = nil,
 	autoBreakFreeConnection = nil,
@@ -6776,6 +6807,8 @@ function applyStoredStateToRuntime()
         playerState.safeTeleportEnabled = S.safeTeleportEnabled == true
         playerState.noJumpCooldownEnabled = S.noJumpCooldownEnabled == true
         playerState.noRollCooldownEnabled = S.noRollCooldownEnabled == true
+        playerState.speedChangerEnabled = S.speedChangerEnabled == true
+        playerState.speedChangerValue = math.clamp(math.floor((tonumber(S.speedChangerValue) or PLAYER_SPEED_CHANGER_DEFAULT) + 0.5), PLAYER_SPEED_CHANGER_MIN, PLAYER_SPEED_CHANGER_MAX)
         playerState.noFallDamageEnabled = false
         playerState.noDamageSelfEnabled = S.noDamageSelfEnabled == true
         playerState.noCactusDamageEnabled = S.noCactusDamageEnabled == true
@@ -6815,6 +6848,8 @@ function applyStoredStateToRuntime()
     S.instantRobEnabled = S.instantRobEnabled == true
     S.cameraNoclipEnabled = S.cameraNoclipEnabled == true
     S.customCursorEnabled = S.customCursorEnabled ~= false
+    S.speedChangerEnabled = S.speedChangerEnabled == true
+    S.speedChangerValue = math.clamp(math.floor((tonumber(S.speedChangerValue) or PLAYER_SPEED_CHANGER_DEFAULT) + 0.5), PLAYER_SPEED_CHANGER_MIN, PLAYER_SPEED_CHANGER_MAX)
     S.silentAimAccuracy = math.clamp(math.floor((tonumber(S.silentAimAccuracy) or 50) + 0.5), 1, 100)
     S.silentAimDistanceLimit = math.clamp(math.floor((tonumber(S.silentAimDistanceLimit) or 1000) + 0.5), 10, 20000)
     S.gunFovRadius = math.clamp(math.floor((tonumber(S.gunFovRadius) or 200) + 0.5), 10, 2000)
@@ -24671,6 +24706,7 @@ function hasPlayerStateFeatureHooksEnabled()
 	return hasPlayerStateNetworkHookEnabled()
 		or playerState.noJumpCooldownEnabled
 		or playerState.noRollCooldownEnabled
+		or playerState.speedChangerEnabled
 		or playerState.noCactusDamageEnabled
 		or playerState.noRagdollEnabled
 		or playerState.autoBreakFreeEnabled
@@ -25066,6 +25102,202 @@ function ensureNoRollCooldownHooks()
 	clearNoRollCooldownState(playerCharacter)
 end
 
+function clampSpeedChangerValue(value)
+	return math.clamp(
+		math.floor((tonumber(value) or PLAYER_SPEED_CHANGER_DEFAULT) + 0.5),
+		PLAYER_SPEED_CHANGER_MIN,
+		PLAYER_SPEED_CHANGER_MAX
+	)
+end
+
+function getSpeedChangerValue()
+	local value = clampSpeedChangerValue(playerState.speedChangerValue or S.speedChangerValue)
+	playerState.speedChangerValue = value
+	S.speedChangerValue = value
+	return value
+end
+
+function shouldRunSpeedChanger(character, humanoid, rootPart)
+	if not (playerState.speedChangerEnabled and character and humanoid and rootPart) then
+		return false
+	end
+	if humanoid.Health <= 0 then
+		return false
+	end
+	if autoMineEnabled or (type(pathState) == "table" and pathState.playbackActive == true) then
+		return false
+	end
+
+	local playerCharacter = resolvePlayerCharacterModule(false) or resolvePlayerCharacterModule(true)
+	if isTable(playerCharacter) then
+		local blockedFlags = {
+			"Swimming",
+			"Flying",
+			"Climbing",
+			"UsingBroomstick",
+			"Rappeling",
+			"Sitting",
+			"IsDead",
+			"IsTiedUp",
+		}
+		for _, flagName in ipairs(blockedFlags) do
+			if playerCharacter[flagName] == true then
+				return false
+			end
+		end
+		local isRolling = rawget(playerCharacter, "IsRolling") or playerCharacter.IsRolling
+		if type(isRolling) == "function" then
+			local okRolling, rolling = pcall(isRolling, playerCharacter)
+			if okRolling and rolling == true then
+				return false
+			end
+		end
+		local isRagdolled = rawget(playerCharacter, "IsRagdolled") or playerCharacter.IsRagdolled
+		if type(isRagdolled) == "function" then
+			local okRagdolled, ragdolled = pcall(isRagdolled, playerCharacter)
+			if okRagdolled and ragdolled == true then
+				return false
+			end
+		end
+		local isSittingOrRiding = rawget(playerCharacter, "IsSittingOrRiding") or playerCharacter.IsSittingOrRiding
+		if type(isSittingOrRiding) == "function" then
+			local okSitting, sittingOrRiding = pcall(isSittingOrRiding, playerCharacter)
+			if okSitting and sittingOrRiding == true then
+				return false
+			end
+		end
+	end
+
+	return true
+end
+
+function resetSpeedChangerRuntime()
+	playerState.speedChangerLastFlatPosition = nil
+	playerState.speedChangerLastMoveDirection = nil
+end
+
+function detectSpeedChangerRubberBand(rootPart)
+	local lastFlatPosition = playerState.speedChangerLastFlatPosition
+	local lastDirection = playerState.speedChangerLastMoveDirection
+	if typeof(lastFlatPosition) ~= "Vector3" or typeof(lastDirection) ~= "Vector3" or lastDirection.Magnitude <= 0 then
+		return false
+	end
+
+	local flatPosition = Vector3.new(rootPart.Position.X, 0, rootPart.Position.Z)
+	local flatDelta = flatPosition - lastFlatPosition
+	if flatDelta.Magnitude < 2.25 then
+		return false
+	end
+
+	return flatDelta.Unit:Dot(lastDirection.Unit) < -0.35
+end
+
+function markSpeedChangerRubberBand()
+	local now = os.clock()
+	if now - (tonumber(playerState.speedChangerLastRubberBandAt) or 0) < 0.6 then
+		return
+	end
+
+	playerState.speedChangerLastRubberBandAt = now
+	playerState.speedChangerBackoffUntil = now + PLAYER_SPEED_CHANGER_RUBBERBAND_BACKOFF_SECONDS
+	playerState.speedChangerBackoffSpeed = math.max(
+		PLAYER_SPEED_CHANGER_WALKSPEED_CAP,
+		getSpeedChangerValue() * PLAYER_SPEED_CHANGER_RUBBERBAND_BACKOFF_MULTIPLIER
+	)
+	resetSpeedChangerRuntime()
+	pushDebugRateLimited("speed_changer_rubberband", "speed changer backed off after rubber band", 1)
+	if type(notifyRubberBandDetected) == "function" then
+		notifyRubberBandDetected()
+	end
+end
+
+function getSpeedChangerEffectiveSpeed()
+	local targetSpeed = getSpeedChangerValue()
+	local now = os.clock()
+	if now < (tonumber(playerState.speedChangerBackoffUntil) or 0) then
+		targetSpeed = math.min(targetSpeed, tonumber(playerState.speedChangerBackoffSpeed) or targetSpeed)
+	end
+	return math.clamp(targetSpeed, PLAYER_SPEED_CHANGER_MIN, PLAYER_SPEED_CHANGER_MAX)
+end
+
+function applySpeedChangerPulse(dt)
+	local character = getWorldCharacterForPlayer(localPlayer) or (localPlayer and localPlayer.Character)
+	local humanoid = getCharacterHumanoid(character)
+	local rootPart = getRootPart(character)
+	if not shouldRunSpeedChanger(character, humanoid, rootPart) then
+		resetSpeedChangerRuntime()
+		return
+	end
+
+	if detectSpeedChangerRubberBand(rootPart) then
+		markSpeedChangerRubberBand()
+		return
+	end
+
+	local moveDirection = humanoid.MoveDirection
+	local flatMoveDirection = moveDirection and Vector3.new(moveDirection.X, 0, moveDirection.Z) or Vector3.zero
+	if flatMoveDirection.Magnitude <= MOVE_DIRECTION_DEADZONE then
+		resetSpeedChangerRuntime()
+		return
+	end
+	flatMoveDirection = flatMoveDirection.Unit
+
+	local targetSpeed = getSpeedChangerEffectiveSpeed()
+	local dtSeconds = math.clamp(tonumber(dt) or (1 / 60), 1 / 240, 1 / 20)
+	local velocity = rootPart.AssemblyLinearVelocity or rootPart.Velocity
+	local verticalVelocity = velocity.Y
+	local currentFlatVelocity = Vector3.new(velocity.X, 0, velocity.Z)
+	local targetFlatVelocity = flatMoveDirection * targetSpeed
+	local maxDelta = PLAYER_SPEED_CHANGER_ACCEL * dtSeconds
+	local deltaVelocity = targetFlatVelocity - currentFlatVelocity
+	local nextFlatVelocity = targetFlatVelocity
+	if deltaVelocity.Magnitude > maxDelta then
+		nextFlatVelocity = currentFlatVelocity + (deltaVelocity.Unit * maxDelta)
+	end
+
+	local maxWalkSpeed = math.min(targetSpeed, PLAYER_SPEED_CHANGER_WALKSPEED_CAP)
+	if humanoid.WalkSpeed < maxWalkSpeed then
+		humanoid.WalkSpeed = maxWalkSpeed
+	end
+
+	local nextVelocity = Vector3.new(nextFlatVelocity.X, verticalVelocity, nextFlatVelocity.Z)
+	pcall(function()
+		rootPart.AssemblyLinearVelocity = nextVelocity
+	end)
+	pcall(function()
+		rootPart.Velocity = nextVelocity
+	end)
+
+	playerState.speedChangerLastFlatPosition = Vector3.new(rootPart.Position.X, 0, rootPart.Position.Z)
+	playerState.speedChangerLastMoveDirection = flatMoveDirection
+end
+
+function restoreSpeedChangerHooks()
+	if playerState.speedChangerConnection then
+		pcall(function()
+			playerState.speedChangerConnection:Disconnect()
+		end)
+	end
+	playerState.speedChangerConnection = nil
+	resetSpeedChangerRuntime()
+end
+
+function ensureSpeedChangerHooks()
+	if not playerState.speedChangerEnabled then
+		return
+	end
+	if playerState.speedChangerConnection then
+		return
+	end
+
+	playerState.speedChangerConnection = _RunService.Heartbeat:Connect(function(dt)
+		if destroyed or not isSessionActive() or not playerState.speedChangerEnabled then
+			return
+		end
+		applySpeedChangerPulse(dt)
+	end)
+end
+
 function restoreAutoBreakFreeHooks()
     if playerState.autoBreakFreeConnection then
         pcall(function()
@@ -25321,6 +25553,12 @@ function ensurePlayerFeatureHooks()
 		restoreNoRollCooldownHooks()
 	end
 
+	if playerState.speedChangerEnabled then
+		ensureSpeedChangerHooks()
+	else
+		restoreSpeedChangerHooks()
+	end
+
 	if playerState.noCactusDamageEnabled then
 		ensureNoCactusDamageHooks()
 	else
@@ -25355,6 +25593,9 @@ function ensurePlayerFeatureHooks()
 				if playerState.noRollCooldownEnabled then
 					ensureNoRollCooldownHooks()
 				end
+				if playerState.speedChangerEnabled then
+					ensureSpeedChangerHooks()
+				end
 				if playerState.noCactusDamageEnabled then
 					ensureNoCactusDamageHooks()
 				end
@@ -25369,6 +25610,7 @@ function ensurePlayerFeatureHooks()
 			restorePlayerStateNetworkHook()
             restoreNoJumpCooldownHooks()
 			restoreNoRollCooldownHooks()
+			restoreSpeedChangerHooks()
 			restoreNoCactusDamageHooks()
             restoreAutoBreakFreeHooks()
             restoreGunFeatureHooks()
@@ -28049,6 +28291,22 @@ end
 
 function setNoRollCooldownEnabled(isEnabled)
 	return setPlayerFeatureFlag("noRollCooldownEnabled", isEnabled, "no roll cooldown")
+end
+
+function setSpeedChangerEnabled(isEnabled)
+	return setPlayerFeatureFlag("speedChangerEnabled", isEnabled, "speed changer")
+end
+
+function setSpeedChangerValue(value, skipPersistence)
+	local nextValue = clampSpeedChangerValue(value)
+	local changed = math.abs((tonumber(playerState.speedChangerValue) or PLAYER_SPEED_CHANGER_DEFAULT) - nextValue) > 0.001
+	playerState.speedChangerValue = nextValue
+	S.speedChangerValue = nextValue
+	if changed and not skipPersistence then
+		schedulePersist()
+		pushDebug("speed changer: " .. tostring(nextValue))
+	end
+	return changed, nextValue
 end
 
 function setNoFallDamageEnabled(isEnabled)
@@ -34325,12 +34583,28 @@ function __westwareBuildPlayerTab()
 
     createBoundToggleRow("Infinite Jump", elementsList, playerState, "noJumpCooldownEnabled", setNoJumpCooldownEnabled)
     createBoundToggleRow("No Roll Cooldown", elementsList, playerState, "noRollCooldownEnabled", setNoRollCooldownEnabled)
+    local _, _, speedChangerSync = createBoundToggleRow("Speed changer", elementsList, playerState, "speedChangerEnabled", setSpeedChangerEnabled)
+    local speedChangerSliderRow, speedChangerSliderUpdate = createSliderRow("Speed", elementsList, getSpeedChangerValue(), function(value)
+        setSpeedChangerValue(value)
+    end, function()
+        return getSpeedChangerValue()
+    end, PLAYER_SPEED_CHANGER_MIN, PLAYER_SPEED_CHANGER_MAX)
     createBoundToggleRow("No Damageself", elementsList, playerState, "noDamageSelfEnabled", setNoDamageSelfEnabled)
     createBoundToggleRow("No Cactus Damage", elementsList, playerState, "noCactusDamageEnabled", setNoCactusDamageEnabled)
     createBoundToggleRow("No Ragdoll", elementsList, playerState, "noRagdollEnabled", setNoRagdollEnabled)
     createBoundToggleRow("Auto Break Lasso", elementsList, playerState, "autoBreakFreeEnabled", setAutoBreakFreeEnabled)
     createBoundToggleRow("Auto Get Up", elementsList, playerState, "autoGetUpEnabled", setAutoGetUpEnabled)
     createBoundToggleRow("Equip while swimming", elementsList, playerState, "equipWhileSwimmingEnabled", setEquipWhileSwimmingEnabled)
+
+    local playerRowsInitialized = false
+    local function syncPlayerRows()
+        pcall(speedChangerSync)
+        pcall(speedChangerSliderUpdate, getSpeedChangerValue(), true)
+        setAnimatedRowVisible(speedChangerSliderRow, playerState.speedChangerEnabled == true, 38, not playerRowsInitialized)
+        playerRowsInitialized = true
+    end
+    table.insert(_allUiSyncs, syncPlayerRows)
+    syncPlayerRows()
 
 	_currentRegistryTab = nil
 end
