@@ -13214,17 +13214,7 @@ function getProjectileAccuracyState(sharedData, projectileEntry)
 end
 
 function getNoSpreadAccuracyOverride(sharedData, projectileEntry)
-    local data = isTable(sharedData) and sharedData or {}
-    local entry = isTable(projectileEntry) and projectileEntry or {}
-    local baseAccuracy = tonumber(rawget(data, "ProjectileAccuracy") or data.ProjectileAccuracy) or 1
-    if tostring(entry.ammoType or "") == "ShotgunRound" then
-        baseAccuracy = baseAccuracy * (tonumber(rawget(data, "ShotgunRoundAccuracy") or data.ShotgunRoundAccuracy) or 1)
-    end
-    if baseAccuracy <= 0 then
-        return 999
-    end
-
-    return math.max(1, (1 / baseAccuracy) + 0.001)
+    return 1
 end
 
 function applySilentAimToProjectileEntry(projectileEntry, targetInfo, projectileType, sharedData)
@@ -13299,13 +13289,13 @@ function applySilentAimToProjectileEntry(projectileEntry, targetInfo, projectile
         end
     else
         local nextDirection = aimDirection
-        if projectileName ~= "TomahawkProjectile" and not S.noSpreadEnabled then
+        if projectileName ~= "TomahawkProjectile" then
             nextDirection = getSpreadVectorCompensation(projectileEntry.seed, aimDirection, spreadAngle)
         end
         projectileEntry.direction = nextDirection
         changed = true
         if projectileName ~= "TomahawkProjectile" and (type(projectileEntry.accuracy) == "number" or projectileEntry.accuracy == nil) then
-            projectileEntry.accuracy = getNoSpreadAccuracyOverride(data, projectileEntry)
+            projectileEntry.accuracy = 1
             changed = true
         end
     end
@@ -13354,8 +13344,9 @@ function applyNoSpreadToProjectileEntry(projectileEntry, projectileType, sharedD
         return false
     end
 
-    projectileEntry.direction = direction.Unit
-    projectileEntry.accuracy = getNoSpreadAccuracyOverride(sharedData, projectileEntry)
+    local _, _, spreadAngle = getProjectileAccuracyState(sharedData, projectileEntry)
+    projectileEntry.direction = getSpreadVectorCompensation(projectileEntry.seed, direction.Unit, spreadAngle)
+    projectileEntry.accuracy = 1
     if type(projectileEntry.spread) == "number" then
         projectileEntry.spread = 0
     end
