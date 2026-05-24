@@ -284,6 +284,7 @@ local DEFAULTS = {
     noRecoilEnabled = false,
     noFireCooldownEnabled = false,
     fastReloadEnabled = false,
+    noBulletLossEnabled = false,
     instantLassoChargeEnabled = false,
     lassoSilentAimEnabled = false,
     lassoSnaplineEnabled = false,
@@ -1118,6 +1119,7 @@ local function serializeState()
         noRecoilEnabled = S.noRecoilEnabled,
         noFireCooldownEnabled = S.noFireCooldownEnabled,
         fastReloadEnabled = S.fastReloadEnabled,
+        noBulletLossEnabled = S.noBulletLossEnabled,
         instantLassoChargeEnabled = S.instantLassoChargeEnabled,
         lassoSilentAimEnabled = S.lassoSilentAimEnabled,
         lassoSnaplineEnabled = S.lassoSnaplineEnabled,
@@ -1297,6 +1299,9 @@ function applySerializedState(data)
     end
     if type(data.fastReloadEnabled) == "boolean" then
         S.fastReloadEnabled = data.fastReloadEnabled
+    end
+    if type(data.noBulletLossEnabled) == "boolean" then
+        S.noBulletLossEnabled = data.noBulletLossEnabled
     end
     if type(data.instantLassoChargeEnabled) == "boolean" then
         S.instantLassoChargeEnabled = data.instantLassoChargeEnabled
@@ -6691,6 +6696,7 @@ gunFeatureState = {
 	fastReloadOriginalPlayTrack = nil,
 	fastReloadWrapper = nil,
     fastReloadHooks = {},
+    noBulletLossHooks = {},
     lassoChargeOverrides = {},
     lassoSilentAimHooks = {},
     lassoParams = nil,
@@ -12840,6 +12846,7 @@ function hasGunFeatureHooksEnabled()
         or S.noRecoilEnabled
         or S.noFireCooldownEnabled
         or S.fastReloadEnabled
+        or S.noBulletLossEnabled
         or S.instantLassoChargeEnabled
         or S.lassoSilentAimEnabled
         or S.lassoNoRopeLimitEnabled
@@ -14987,11 +14994,180 @@ function ensureFastReloadHook()
     gunFeatureState.fastReloadWrapper = hook.wrapper
 end
 
+function getGunChamberData(gunItem)
+    if not isTable(gunItem) then
+        return nil
+    end
+
+    local state = rawget(gunItem, "State") or gunItem.State
+    local chamberData = isTable(state) and (rawget(state, "ChamberData") or state.ChamberData) or nil
+    if isTable(chamberData) and isTable(chamberData.bullets) then
+        return chamberData
+    end
+
+    return nil
+end
+
+function refillGunAmmoAndChambers(gunItem)
+    if not isTable(gunItem) then
+        return false
+    end
+
+    local changed = false
+    local maxAmmo = tonumber(rawget(gunItem, "MaxAmmo") or gunItem.MaxAmmo)
+    if maxAmmo and maxAmmo > 0 then
+        local ammo = tonumber(rawget(gunItem, "Ammo") or gunItem.Ammo)
+        if ammo == nil or ammo < maxAmmo then
+            gunItem.Ammo = maxAmmo
+            changed = true
+        end
+    end
+
+    local chamberData = getGunChamberData(gunItem)
+    if chamberData then
+        local bullets = chamberData.bullets
+        local count = tonumber(chamberData.count) or #bullets
+        if count and count > 0 then
+            if type(chamberData.index) ~= "number" or chamberData.index < 1 or chamberData.index > count then
+                chamberData.index = 1
+                changed = true
+            end
+            for index = 1, count do
+                if bullets[index] ~= "unused" then
+                    bullets[index] = "unused"
+                    changed = true
+                end
+            end
+            if chamberData.spin then
+                chamberData.spin = false
+                changed = true
+            end
+        end
+    end
+
+    if changed and type(gunItem.UpdateState) == "function" then
+        pcall(gunItem.UpdateState, gunItem)
+    end
+
+    return changed
+end
+
+function restoreNoBulletLossHook()
+    local hooks = type(gunFeatureState.noBulletLossHooks) == "table" and gunFeatureState.noBulletLossHooks or {}
+    for gunItem, hook in pairs(hooks) do
+        if isTable(gunItem) and type(hook) == "table" then
+            if type(hook.originalIsDryFire) == "function" and gunItem.IsDryFire == hook.isDryFireWrapper then
+                gunItem.IsDryFire = hook.originalIsDryFire
+            end
+            if type(hook.originalFire) == "function" and gunItem.Fire == hook.fireWrapper then
+                gunItem.Fire = hook.originalFire
+            end
+            if type(hook.originalCanShoot) == "function" and gunItem.CanShoot == hook.canShootWrapper then
+                gunItem.CanShoot = hook.originalCanShoot
+            end
+            if type(hook.originalNetworkActivate) == "function" and gunItem.NetworkActivate == hook.networkActivateWrapper then
+                gunItem.NetworkActivate = hook.originalNetworkActivate
+            end
+        end
+    end
+
+    gunFeatureState.noBulletLossHooks = {}
+end
+
+function ensureNoBulletLossHook()
+    if not S.noBulletLossEnabled then
+        return
+    end
+
+    local gunItem = getCurrentEquippedGunItem(false) or getCurrentEquippedGunItem(true)
+    if not isGunItemTool(gunItem) then
+        return
+    end
+
+    refillGunAmmoAndChambers(gunItem)
+
+    if type(gunFeatureState.noBulletLossHooks) ~= "table" then
+        gunFeatureState.noBulletLossHooks = {}
+    end
+
+    local hook = gunFeatureState.noBulletLossHooks[gunItem]
+    if type(hook) ~= "table" then
+        hook = {}
+        gunFeatureState.noBulletLossHooks[gunItem] = hook
+    end
+
+    local isDryFire = rawget(gunItem, "IsDryFire") or gunItem.IsDryFire
+    if type(isDryFire) == "function" and isDryFire ~= hook.isDryFireWrapper then
+        hook.originalIsDryFire = isDryFire
+        hook.isDryFireWrapper = function(self, ...)
+            if S.noBulletLossEnabled then
+                refillGunAmmoAndChambers(self)
+            end
+            local result = hook.originalIsDryFire(self, ...)
+            if S.noBulletLossEnabled then
+                refillGunAmmoAndChambers(self)
+                return false
+            end
+            return result
+        end
+        gunItem.IsDryFire = hook.isDryFireWrapper
+    end
+
+    local fire = rawget(gunItem, "Fire") or gunItem.Fire
+    if type(fire) == "function" and fire ~= hook.fireWrapper then
+        hook.originalFire = fire
+        hook.fireWrapper = function(self, ...)
+            if S.noBulletLossEnabled then
+                refillGunAmmoAndChambers(self)
+            end
+            local results = table.pack(hook.originalFire(self, ...))
+            if S.noBulletLossEnabled then
+                refillGunAmmoAndChambers(self)
+            end
+            return table.unpack(results, 1, results.n)
+        end
+        gunItem.Fire = hook.fireWrapper
+    end
+
+    local canShoot = rawget(gunItem, "CanShoot") or gunItem.CanShoot
+    if type(canShoot) == "function" and canShoot ~= hook.canShootWrapper then
+        hook.originalCanShoot = canShoot
+        hook.canShootWrapper = function(self, ...)
+            if S.noBulletLossEnabled then
+                refillGunAmmoAndChambers(self)
+            end
+            local canShootResult, reason = hook.originalCanShoot(self, ...)
+            if S.noBulletLossEnabled and reason == "NoAmmo" then
+                return true
+            end
+            return canShootResult, reason
+        end
+        gunItem.CanShoot = hook.canShootWrapper
+    end
+
+    local networkActivate = rawget(gunItem, "NetworkActivate") or gunItem.NetworkActivate
+    if type(networkActivate) == "function" and networkActivate ~= hook.networkActivateWrapper then
+        hook.originalNetworkActivate = networkActivate
+        hook.networkActivateWrapper = function(self, actionName, ...)
+            if S.noBulletLossEnabled and tostring(actionName or "") == "Shoot" then
+                refillGunAmmoAndChambers(self)
+            end
+            local results = table.pack(hook.originalNetworkActivate(self, actionName, ...))
+            if S.noBulletLossEnabled and tostring(actionName or "") == "Shoot" then
+                refillGunAmmoAndChambers(self)
+            end
+            return table.unpack(results, 1, results.n)
+        end
+        gunItem.NetworkActivate = hook.networkActivateWrapper
+    end
+end
+
 function restoreGunFeatureHooks()
     setNoRecoilGuardState(false)
     restoreNoFireCooldownHook()
     restoreWallBangHook()
     restoreFastReloadHook()
+    restoreNoBulletLossHook()
     restoreInstantLassoChargeHooks()
     restoreLassoSilentAimHooks()
     restoreLassoNoRopeLimitHook()
@@ -15028,6 +15204,12 @@ function ensureGunFeatureHooks()
         ensureFastReloadHook()
     else
         restoreFastReloadHook()
+    end
+
+    if S.noBulletLossEnabled then
+        ensureNoBulletLossHook()
+    else
+        restoreNoBulletLossHook()
     end
 
     if S.instantLassoChargeEnabled then
@@ -15070,6 +15252,9 @@ function runGunFeaturePulse()
     end
     if S.fastReloadEnabled then
         ensureFastReloadHook()
+    end
+    if S.noBulletLossEnabled then
+        ensureNoBulletLossHook()
     end
     if S.instantLassoChargeEnabled then
         ensureInstantLassoChargeHooks()
@@ -27106,6 +27291,10 @@ function setFastReloadEnabled(isEnabled)
     return setSFeatureFlag("fastReloadEnabled", isEnabled, "fast reload")
 end
 
+function setNoBulletLossEnabled(isEnabled)
+    return setSFeatureFlag("noBulletLossEnabled", isEnabled, "no bullet loss")
+end
+
 function setInstantLassoChargeEnabled(isEnabled)
     return setSFeatureFlag("instantLassoChargeEnabled", isEnabled, "lasso instant charge")
 end
@@ -33006,6 +33195,7 @@ function initWeaponsGunsSection(elementsList)
     createBoundToggleRow("No recoil", gunList, S, "noRecoilEnabled", setNoRecoilEnabled)
     createBoundToggleRow("No fire cooldown", gunList, S, "noFireCooldownEnabled", setNoFireCooldownEnabled)
     createBoundToggleRow("Fast reload", gunList, S, "fastReloadEnabled", setFastReloadEnabled)
+    createBoundToggleRow("No bullet loss", gunList, S, "noBulletLossEnabled", setNoBulletLossEnabled)
 
     local gunRowsInitialized = false
 
