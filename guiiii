@@ -6665,6 +6665,8 @@ LASSO_FAST_HIT_CONFIRM_DELAY = 0.12
 WALL_BANG_PENETRATION = 100000
 FAST_PROJECTILE_MAX_TRAVEL_TIME = 9.75
 FAST_PROJECTILE_TRACK_BUFFER = 1
+FAST_PROJECTILE_FORCED_HIT_MAX_DISTANCE = 550
+FAST_PROJECTILE_FORCED_HIT_MAX_TRAVEL_TIME = 0.75
 FAST_RELOAD_SPEED_MULTIPLIER = 4
 FAST_RELOAD_MAX_ANIM_SPEED = 7
 gunFeatureState = {
@@ -13561,6 +13563,26 @@ function getFastProjectileFinalTime(projectileEntry, travelTime)
     return getSyncedNetworkTime()
 end
 
+function shouldForceFastProjectileFinalEvent(targetInfo, projectileEntry, travelTime)
+    local origin = getProjectileEntryOrigin(projectileEntry)
+    local targetPosition = targetInfo and targetInfo.position
+    if typeof(origin) ~= "Vector3" or typeof(targetPosition) ~= "Vector3" then
+        return false
+    end
+
+    local distance = (targetPosition - origin).Magnitude
+    if distance > FAST_PROJECTILE_FORCED_HIT_MAX_DISTANCE then
+        return false
+    end
+
+    local duration = tonumber(travelTime)
+    if duration and duration > FAST_PROJECTILE_FORCED_HIT_MAX_TRAVEL_TIME then
+        return false
+    end
+
+    return true
+end
+
 function scheduleFastProjectileFinalEvent(targetInfo, projectileEntry, bulletIds)
     local bulletIdList = getFastProjectileBulletIdList(bulletIds)
     local targetPart = targetInfo and targetInfo.part
@@ -13598,6 +13620,9 @@ function scheduleFastProjectileFinalEvent(targetInfo, projectileEntry, bulletIds
 
     local playerTarget, animalTarget, npcTarget = getFastProjectileTargetFlags(targetInfo)
     local travelTime = estimateFastProjectileTravelTime(projectileEntry, targetInfo)
+    if not shouldForceFastProjectileFinalEvent(targetInfo, projectileEntry, travelTime) then
+        return
+    end
     local finalTime = getFastProjectileFinalTime(projectileEntry, travelTime)
     trackFastProjectileBullets(bulletIdList, travelTime + FAST_PROJECTILE_TRACK_BUFFER)
     local npcResolvedTarget = nil
