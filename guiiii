@@ -6663,7 +6663,7 @@ LASSO_SILENT_AIM_MAX_DISTANCE = 200
 LASSO_FAST_THROW_MULTIPLIER = 3.5
 LASSO_FAST_HIT_CONFIRM_DELAY = 0.12
 WALL_BANG_PENETRATION = 100000
-FAST_PROJECTILE_MAX_TRAVEL_TIME = 9.25
+FAST_PROJECTILE_MAX_TRAVEL_TIME = 9.75
 FAST_PROJECTILE_TRACK_BUFFER = 1
 FAST_RELOAD_SPEED_MULTIPLIER = 4
 FAST_RELOAD_MAX_ANIM_SPEED = 7
@@ -13119,23 +13119,42 @@ function solveProjectileTravel(origin, speed, targetPosition, gravityMagnitude)
     local displacement = targetPosition - origin
     local horizontalDisplacement = Vector3.new(displacement.X, 0, displacement.Z)
     local horizontalDistance = horizontalDisplacement.Magnitude
-    if horizontalDistance <= 0.001 then
-        local distance = displacement.Magnitude
-        if distance <= 0.001 then
-            return Vector3.new(0, 1, 0), 0
-        end
+    local distance = displacement.Magnitude
+    if distance <= 0.001 then
+        return Vector3.new(0, 1, 0) * projectileSpeed, 0
+    end
+
+    local gravity = math.max(tonumber(gravityMagnitude) or 0, 0)
+    if gravity <= 0.001 then
         local directTime = distance / projectileSpeed
         return displacement.Unit * projectileSpeed, directTime
     end
 
-    local travelTime = horizontalDistance / projectileSpeed
-    if travelTime <= 0 then
+    local speedSquared = projectileSpeed * projectileSpeed
+    local y = displacement.Y
+    local discriminant = (speedSquared - gravity * y) ^ 2 - (gravity * gravity * distance * distance)
+    if discriminant < 0 then
+        local fallbackTime = distance / projectileSpeed
+        return displacement.Unit * projectileSpeed, fallbackTime
+    end
+
+    local root = math.sqrt(discriminant)
+    local lowArcTimeSquared = (speedSquared - gravity * y - root) / (gravity * gravity * 0.5)
+    local highArcTimeSquared = (speedSquared - gravity * y + root) / (gravity * gravity * 0.5)
+    local travelTime = lowArcTimeSquared > 0 and math.sqrt(lowArcTimeSquared)
+        or (highArcTimeSquared > 0 and math.sqrt(highArcTimeSquared) or nil)
+    if not travelTime or travelTime <= 0 then
         return nil, nil
     end
 
-    local verticalVelocity = (displacement.Y + (0.5 * gravityMagnitude * travelTime * travelTime)) / travelTime
-    local flatVelocity = horizontalDisplacement.Unit * projectileSpeed
-    return Vector3.new(flatVelocity.X, verticalVelocity, flatVelocity.Z), travelTime
+    local horizontalVelocity = horizontalDistance > 0.001 and (horizontalDisplacement / travelTime) or Vector3.zero
+    local verticalVelocity = (y + 0.5 * gravity * travelTime * travelTime) / travelTime
+    local solvedVelocity = Vector3.new(horizontalVelocity.X, verticalVelocity, horizontalVelocity.Z)
+    if solvedVelocity.Magnitude <= 0.001 then
+        return displacement.Unit * projectileSpeed, distance / projectileSpeed
+    end
+
+    return solvedVelocity.Unit * projectileSpeed, travelTime
 end
 
 function buildProjectileBasis(direction)
@@ -13532,6 +13551,16 @@ function estimateFastProjectileTravelTime(projectileEntry, targetInfo)
     return math.clamp((targetPosition - origin).Magnitude / speed, 0.01, FAST_PROJECTILE_MAX_TRAVEL_TIME)
 end
 
+function getFastProjectileFinalTime(projectileEntry, travelTime)
+    local startTime = tonumber(projectileEntry and (projectileEntry.startTime or projectileEntry.StartTime))
+    local duration = math.clamp(tonumber(travelTime) or 0, 0.01, FAST_PROJECTILE_MAX_TRAVEL_TIME)
+    if startTime and startTime > 0 then
+        return startTime + duration
+    end
+
+    return getSyncedNetworkTime()
+end
+
 function scheduleFastProjectileFinalEvent(targetInfo, projectileEntry, bulletIds)
     local bulletIdList = getFastProjectileBulletIdList(bulletIds)
     local targetPart = targetInfo and targetInfo.part
@@ -13569,6 +13598,7 @@ function scheduleFastProjectileFinalEvent(targetInfo, projectileEntry, bulletIds
 
     local playerTarget, animalTarget, npcTarget = getFastProjectileTargetFlags(targetInfo)
     local travelTime = estimateFastProjectileTravelTime(projectileEntry, targetInfo)
+    local finalTime = getFastProjectileFinalTime(projectileEntry, travelTime)
     trackFastProjectileBullets(bulletIdList, travelTime + FAST_PROJECTILE_TRACK_BUFFER)
     local npcResolvedTarget = nil
     if npcTarget then
@@ -13610,7 +13640,6 @@ function scheduleFastProjectileFinalEvent(targetInfo, projectileEntry, bulletIds
         local objectHit = targetCFrame:PointToObjectSpace(hitPosition)
         local frontNormal = targetCFrame:VectorToObjectSpace(Vector3.FromNormalId(Enum.NormalId.Front))
         local directionObject = targetCFrame:VectorToObjectSpace(velocity.Unit)
-        local syncedTime = getSyncedNetworkTime()
         local resolvedTarget = targetReference
         if npcTarget then
             resolvedTarget = npcResolvedTarget
@@ -13619,7 +13648,7 @@ function scheduleFastProjectileFinalEvent(targetInfo, projectileEntry, bulletIds
         end
 
         for _, bulletId in ipairs(bulletIdList) do
-            pcall(fireServer, network, "ProjectileEvent", bulletId, syncedTime, "Final", resolvedTarget, objectHit, frontNormal, directionObject, hitPosition, Vector3.FromNormalId(Enum.NormalId.Front), targetMaterialName)
+            pcall(fireServer, network, "ProjectileEvent", bulletId, finalTime, "Final", resolvedTarget, objectHit, frontNormal, directionObject, hitPosition, Vector3.FromNormalId(Enum.NormalId.Front), targetMaterialName)
             task.defer(function()
                 pcall(fireServer, network, "RemoveProjectile", bulletId)
             end)
