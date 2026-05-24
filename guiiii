@@ -6658,6 +6658,8 @@ LASSO_SILENT_AIM_MAX_DISTANCE = 200
 LASSO_FAST_THROW_MULTIPLIER = 3.5
 LASSO_FAST_HIT_CONFIRM_DELAY = 0.12
 WALL_BANG_PENETRATION = 100000
+FAST_PROJECTILE_MAX_TRAVEL_TIME = 9.25
+FAST_PROJECTILE_TRACK_BUFFER = 1
 gunFeatureState = {
     renderConnection = nil,
     warnedAimUnavailable = false,
@@ -13400,14 +13402,19 @@ function untrackFastProjectileBullet(bulletId)
     end
 end
 
-function trackFastProjectileBullets(bulletIds)
+function trackFastProjectileBullets(bulletIds, holdSeconds)
     if type(gunFeatureState.trackedFastProjectileBullets) ~= "table" then
         gunFeatureState.trackedFastProjectileBullets = {}
     end
 
+    local holdTime = math.clamp(
+        tonumber(holdSeconds) or 5,
+        5,
+        FAST_PROJECTILE_MAX_TRAVEL_TIME + FAST_PROJECTILE_TRACK_BUFFER
+    )
     for _, bulletId in ipairs(getFastProjectileBulletIdList(bulletIds)) do
         gunFeatureState.trackedFastProjectileBullets[bulletId] = true
-        task.delay(5, function()
+        task.delay(holdTime, function()
             untrackFastProjectileBullet(bulletId)
         end)
     end
@@ -13490,7 +13497,7 @@ end
 function estimateFastProjectileTravelTime(projectileEntry, targetInfo)
     local travelTime = tonumber(gunFeatureState.lastProjectileTravelTime)
     if travelTime and travelTime >= 0 then
-        return math.clamp(travelTime, 0.01, 2)
+        return math.clamp(travelTime, 0.01, FAST_PROJECTILE_MAX_TRAVEL_TIME)
     end
 
     local origin = getProjectileEntryOrigin(projectileEntry)
@@ -13509,7 +13516,7 @@ function estimateFastProjectileTravelTime(projectileEntry, targetInfo)
         speed = 10000
     end
 
-    return math.clamp((targetPosition - origin).Magnitude / speed, 0.01, 2)
+    return math.clamp((targetPosition - origin).Magnitude / speed, 0.01, FAST_PROJECTILE_MAX_TRAVEL_TIME)
 end
 
 function scheduleFastProjectileFinalEvent(targetInfo, projectileEntry, bulletIds)
@@ -13518,8 +13525,6 @@ function scheduleFastProjectileFinalEvent(targetInfo, projectileEntry, bulletIds
     if #bulletIdList == 0 or not targetPart or not targetPart:IsA("BasePart") then
         return
     end
-
-    trackFastProjectileBullets(bulletIdList)
 
     local origin = getProjectileEntryOrigin(projectileEntry)
     local targetPosition = targetInfo.position or targetPart.Position
@@ -13551,6 +13556,7 @@ function scheduleFastProjectileFinalEvent(targetInfo, projectileEntry, bulletIds
 
     local playerTarget, animalTarget, npcTarget = getFastProjectileTargetFlags(targetInfo)
     local travelTime = estimateFastProjectileTravelTime(projectileEntry, targetInfo)
+    trackFastProjectileBullets(bulletIdList, travelTime + FAST_PROJECTILE_TRACK_BUFFER)
     local npcResolvedTarget = nil
     if npcTarget then
         npcResolvedTarget = { targetPart.Parent and targetPart.Parent.Parent or targetPart.Parent, targetPart.Name }
