@@ -286,11 +286,12 @@ local DEFAULTS = {
     fastReloadEnabled = false,
     noBulletLossEnabled = false,
     instantLassoChargeEnabled = false,
-    lassoFastChargePercent = 10,
+    lassoFastChargePercent = 30,
     lassoSilentAimEnabled = false,
     lassoSnaplineEnabled = false,
     lassoNoRopeLimitEnabled = false,
     fasterLassoEnabled = false,
+    lassoTeleportEnabled = false,
     playerEspEnabled = false,
     playerEspMethods = {
         Text = true,
@@ -1127,6 +1128,7 @@ local function serializeState()
         lassoSnaplineEnabled = S.lassoSnaplineEnabled,
         lassoNoRopeLimitEnabled = S.lassoNoRopeLimitEnabled,
         fasterLassoEnabled = S.fasterLassoEnabled,
+        lassoTeleportEnabled = S.lassoTeleportEnabled,
         playerEspEnabled = S.playerEspEnabled,
         playerEspMethods = clonePlayerEspMethods(S.playerEspMethods),
         cameraNoclipEnabled = S.cameraNoclipEnabled,
@@ -1322,6 +1324,9 @@ function applySerializedState(data)
     end
     if type(data.fasterLassoEnabled) == "boolean" then
         S.fasterLassoEnabled = data.fasterLassoEnabled
+    end
+    if type(data.lassoTeleportEnabled) == "boolean" then
+        S.lassoTeleportEnabled = data.lassoTeleportEnabled
     end
     if type(data.playerEspEnabled) == "boolean" then
         S.playerEspEnabled = data.playerEspEnabled
@@ -6637,6 +6642,9 @@ playerState = {
 	jumpHookConnections = {},
 	breakFreeOwner = nil,
 	breakFreeHook = nil,
+	autoBreakFreeConnection = nil,
+	autoBreakFreeAccumulator = 0,
+	lastAutoBreakFreeAttemptAt = 0,
 	hookedSafeTeleportHandler = nil,
 	originalSafeTeleportPlatformUpdate = nil,
 	safeTeleportPlatformWrapper = nil,
@@ -6668,6 +6676,8 @@ LASSO_SILENT_AIM_MAX_DISTANCE = 200
 LASSO_FAST_THROW_MULTIPLIER = 3.5
 LASSO_FAST_HIT_CONFIRM_DELAY = 0.12
 LASSO_FAST_CHARGE_MIN_TIME = 0.05
+LASSO_TELEPORT_MAX_DISTANCE = 500
+LASSO_TELEPORT_HIT_DELAY = 0.06
 WALL_BANG_PENETRATION = 100000
 FAST_PROJECTILE_MAX_TRAVEL_TIME = 9.75
 FAST_PROJECTILE_TRACK_BUFFER = 1
@@ -6758,6 +6768,7 @@ function applyStoredStateToRuntime()
     S.lassoSnaplineEnabled = S.lassoSnaplineEnabled == true
     S.lassoNoRopeLimitEnabled = S.lassoNoRopeLimitEnabled == true
     S.fasterLassoEnabled = S.fasterLassoEnabled == true
+    S.lassoTeleportEnabled = S.lassoTeleportEnabled == true
     S.cameraNoclipEnabled = S.cameraNoclipEnabled == true
     S.customCursorEnabled = S.customCursorEnabled ~= false
     S.silentAimAccuracy = math.clamp(math.floor((tonumber(S.silentAimAccuracy) or 50) + 0.5), 1, 100)
@@ -12860,6 +12871,7 @@ function hasGunFeatureHooksEnabled()
         or S.lassoSilentAimEnabled
         or S.lassoNoRopeLimitEnabled
         or S.fasterLassoEnabled
+        or S.lassoTeleportEnabled
 end
 
 function hasGunAimVisualsEnabled()
@@ -14105,6 +14117,102 @@ function solveLassoSilentAimVelocity(origin, speed, targetInfo)
     return nil
 end
 
+function getNearestLassoTeleportTargetInfo(origin)
+    if typeof(origin) ~= "Vector3" then
+        return nil
+    end
+
+    local bestTarget = nil
+    local bestDistance = nil
+    local maxDistance = tonumber(LASSO_TELEPORT_MAX_DISTANCE) or 500
+
+    for _, player in ipairs(_Players:GetPlayers()) do
+        if player ~= localPlayer then
+            local _, character = getAliveTwwTargetData(player)
+            local candidate = buildLassoSilentAimTargetInfo("Players", character, player)
+            if candidate and typeof(candidate.position) == "Vector3" then
+                local distance = (candidate.position - origin).Magnitude
+                if distance <= maxDistance and (not bestDistance or distance < bestDistance) then
+                    candidate.worldDistance = distance
+                    bestTarget = candidate
+                    bestDistance = distance
+                end
+            end
+        end
+    end
+
+    return bestTarget
+end
+
+function teleportThrownLassoToTarget(lassoItem, targetInfo)
+    if not (S.lassoTeleportEnabled and isTable(lassoItem) and targetInfo) then
+        return
+    end
+
+    local targetPart = targetInfo.part
+    if not (targetPart and targetPart:IsA("BasePart") and targetPart:IsDescendantOf(workspace)) then
+        return
+    end
+
+    local lassoCircle = rawget(lassoItem, "LassoCircle") or lassoItem.LassoCircle
+    if not (lassoCircle and lassoCircle:IsA("BasePart") and lassoCircle:IsDescendantOf(workspace)) then
+        return
+    end
+
+    local targetPosition = targetPart.Position
+    local lookDirection = lassoCircle.Position - targetPosition
+    if lookDirection.Magnitude < 0.001 then
+        lookDirection = Vector3.new(0, 0, -1)
+    end
+
+    local targetCFrame = CFrame.new(targetPosition, targetPosition + lookDirection.Unit)
+    local network = resolveGlobalNetwork(false) or resolveGlobalNetwork(true)
+
+    pcall(function()
+        lassoCircle.CFrame = targetCFrame
+        lassoCircle.Velocity = Vector3.zero
+        lassoCircle.AssemblyLinearVelocity = Vector3.zero
+        lassoCircle.AssemblyAngularVelocity = Vector3.zero
+    end)
+
+    local bodyForce = lassoCircle:FindFirstChild("BodyForce")
+    if bodyForce then
+        pcall(function()
+            bodyForce.Force = Vector3.zero
+        end)
+    end
+
+    local bodyGyro = lassoCircle:FindFirstChild("BodyGyro")
+    if bodyGyro then
+        pcall(function()
+            bodyGyro.CFrame = targetCFrame * CFrame.Angles(0, -1.5707963267948966, 0)
+        end)
+    end
+
+    if network and type(network.FireServer) == "function" then
+        pcall(network.FireServer, network, "UpdateThrownLasso", targetCFrame)
+    end
+
+    task.delay(0.03, function()
+        if network and type(network.FireServer) == "function" then
+            pcall(network.FireServer, network, "UpdateThrownLasso", targetCFrame)
+        end
+        if not (S.lassoTeleportEnabled and isTable(lassoItem)) then
+            return
+        end
+        if not (targetPart and targetPart:IsA("BasePart") and targetPart:IsDescendantOf(workspace)) then
+            return
+        end
+        if not (lassoItem.IsEquipped and lassoItem.IsThrowingLasso) then
+            return
+        end
+        local onHit = rawget(lassoItem, "OnHit") or lassoItem.OnHit
+        if type(onHit) == "function" then
+            pcall(onHit, lassoItem, targetPart)
+        end
+    end)
+end
+
 function shouldDelayFasterLassoHit(hitPart)
     if not (S.fasterLassoEnabled and typeof(hitPart) == "Instance") then
         return false
@@ -14859,7 +14967,7 @@ function restoreLassoSilentAimHooks()
 end
 
 function ensureLassoSilentAimHook()
-    if not (S.lassoSilentAimEnabled or S.fasterLassoEnabled or S.instantLassoChargeEnabled) then
+    if not (S.lassoSilentAimEnabled or S.fasterLassoEnabled or S.instantLassoChargeEnabled or S.lassoTeleportEnabled) then
         return
     end
 
@@ -14890,6 +14998,7 @@ function ensureLassoSilentAimHook()
             local localVelocityOverride = nil
             local localPlatformVelocity = Vector3.zero
             local localLassoCircle = nil
+            local localTeleportTargetInfo = nil
             if tostring(packedArgs[1] or "") == "ThrowLasso" then
                 local throwVelocity = typeof(packedArgs[3]) == "Vector3" and packedArgs[3] or nil
                 local platformVelocity = typeof(packedArgs[4]) == "Vector3" and packedArgs[4] or Vector3.zero
@@ -14900,8 +15009,12 @@ function ensureLassoSilentAimHook()
                     local networkVelocity = throwVelocity
                     local visualVelocity = throwVelocity
 
-                    if S.lassoSilentAimEnabled then
-                        local targetInfo = getLassoSilentAimTargetInfo()
+                    if S.lassoTeleportEnabled then
+                        localTeleportTargetInfo = getNearestLassoTeleportTargetInfo(origin)
+                    end
+
+                    if S.lassoSilentAimEnabled or localTeleportTargetInfo then
+                        local targetInfo = localTeleportTargetInfo or getLassoSilentAimTargetInfo()
                         if targetInfo then
                             local aimedVelocity = solveLassoSilentAimVelocity(origin, throwSpeed, targetInfo)
                             if typeof(aimedVelocity) == "Vector3" and aimedVelocity.Magnitude > 0.001 then
@@ -14928,6 +15041,12 @@ function ensureLassoSilentAimHook()
             end
 
             local results = table.pack(hook.originalNetworkActivate(self, table.unpack(packedArgs, 1, packedArgs.n)))
+
+            if localTeleportTargetInfo then
+                task.delay(LASSO_TELEPORT_HIT_DELAY, function()
+                    teleportThrownLassoToTarget(self, localTeleportTargetInfo)
+                end)
+            end
 
             if localLassoCircle and localLassoCircle:IsA("BasePart") and typeof(localVelocityOverride) == "Vector3" then
                 localLassoCircle.Velocity = localVelocityOverride + localPlatformVelocity
@@ -15366,7 +15485,7 @@ function ensureGunFeatureHooks()
         restoreInstantLassoChargeHooks()
     end
 
-    if S.lassoSilentAimEnabled or S.fasterLassoEnabled or S.instantLassoChargeEnabled then
+    if S.lassoSilentAimEnabled or S.fasterLassoEnabled or S.instantLassoChargeEnabled or S.lassoTeleportEnabled then
         ensureLassoSilentAimHook()
     else
         restoreLassoSilentAimHooks()
@@ -15407,7 +15526,7 @@ function runGunFeaturePulse()
     if S.instantLassoChargeEnabled then
         ensureInstantLassoChargeHooks()
     end
-    if S.lassoSilentAimEnabled or S.fasterLassoEnabled or S.instantLassoChargeEnabled then
+    if S.lassoSilentAimEnabled or S.fasterLassoEnabled or S.instantLassoChargeEnabled or S.lassoTeleportEnabled then
         ensureLassoSilentAimHook()
     end
     if S.lassoNoRopeLimitEnabled then
@@ -24418,6 +24537,14 @@ function ensureNoJumpCooldownHooks()
 end
 
 function restoreAutoBreakFreeHooks()
+    if playerState.autoBreakFreeConnection then
+        pcall(function()
+            playerState.autoBreakFreeConnection:Disconnect()
+        end)
+        playerState.autoBreakFreeConnection = nil
+    end
+    playerState.autoBreakFreeAccumulator = 0
+
     if playerState.breakFreeOwner and playerState.breakFreeHook then
         local owner = playerState.breakFreeOwner
         local hook = playerState.breakFreeHook
@@ -24488,6 +24615,9 @@ function installAutoBreakFreeHook(owner)
             if playerState.autoBreakFreeEnabled and type(value) == "number" and value > 0 then
                 shadowValue = 1
             end
+            if playerState.breakFreeOwner == owner and playerState.breakFreeHook then
+                playerState.breakFreeHook.shadowValue = shadowValue
+            end
             return
         end
         if type(originalNewIndex) == "function" then
@@ -24517,6 +24647,63 @@ function installAutoBreakFreeHook(owner)
     return true
 end
 
+function triggerAutoBreakFree(playerCharacter)
+    if not (playerState.autoBreakFreeEnabled and isTable(playerCharacter)) then
+        return false
+    end
+
+    local canBreakFreeFn = rawget(playerCharacter, "CanBreakFree") or playerCharacter.CanBreakFree
+    if type(canBreakFreeFn) ~= "function" then
+        return false
+    end
+
+    local okCanBreak, canBreak = pcall(canBreakFreeFn, playerCharacter)
+    if not okCanBreak or canBreak ~= true then
+        return false
+    end
+
+    local now = os.clock()
+    if now - (tonumber(playerState.lastAutoBreakFreeAttemptAt) or 0) < 0.1 then
+        return false
+    end
+    playerState.lastAutoBreakFreeAttemptAt = now
+
+    pcall(function()
+        playerCharacter.BreakFreePerc = 1
+    end)
+    if playerState.breakFreeHook then
+        playerState.breakFreeHook.shadowValue = 1
+    end
+
+    local network = resolveGlobalNetwork(false) or resolveGlobalNetwork(true)
+    if network and type(network.FireServer) == "function" then
+        pcall(network.FireServer, network, "AttemptBreakFree")
+    end
+
+    return true
+end
+
+function ensureAutoBreakFreeMonitor()
+    if playerState.autoBreakFreeConnection then
+        return
+    end
+
+    playerState.autoBreakFreeAccumulator = 0
+    playerState.autoBreakFreeConnection = _RunService.Heartbeat:Connect(function(dt)
+        if destroyed or not isSessionActive() or not playerState.autoBreakFreeEnabled then
+            return
+        end
+        playerState.autoBreakFreeAccumulator = (tonumber(playerState.autoBreakFreeAccumulator) or 0) + (tonumber(dt) or 0.016)
+        if playerState.autoBreakFreeAccumulator < 0.05 then
+            return
+        end
+        playerState.autoBreakFreeAccumulator = 0
+
+        local playerCharacter = resolvePlayerCharacterModule(false) or resolvePlayerCharacterModule(true)
+        triggerAutoBreakFree(playerCharacter)
+    end)
+end
+
 function ensureAutoBreakFreeHooks()
     if not playerState.autoBreakFreeEnabled then
         return
@@ -24526,6 +24713,8 @@ function ensureAutoBreakFreeHooks()
     if installAutoBreakFreeHook(owner) and playerState.breakFreeHook and type(playerState.breakFreeHook.shadowValue) == "number" and playerState.breakFreeHook.shadowValue > 0 then
         playerState.breakFreeHook.shadowValue = 1
     end
+    ensureAutoBreakFreeMonitor()
+    triggerAutoBreakFree(owner)
 end
 
 function runPlayerFeaturePulse()
@@ -27478,6 +27667,10 @@ end
 
 function setFasterLassoEnabled(isEnabled)
     return setSFeatureFlag("fasterLassoEnabled", isEnabled, "faster lasso")
+end
+
+function setLassoTeleportEnabled(isEnabled)
+    return setSFeatureFlag("lassoTeleportEnabled", isEnabled, "lasso teleport")
 end
 
 function setPlayerEspEnabled(isEnabled)
@@ -33404,6 +33597,7 @@ function initWeaponsLassoSection(elementsList)
 
     createBoundToggleRow("No rope limit", lassoList, S, "lassoNoRopeLimitEnabled", setLassoNoRopeLimitEnabled)
     createBoundToggleRow("Faster lasso", lassoList, S, "fasterLassoEnabled", setFasterLassoEnabled)
+    createBoundToggleRow("Lasso teleport", lassoList, S, "lassoTeleportEnabled", setLassoTeleportEnabled)
     local fastChargeRow, _, fastChargeSync = createBoundToggleRow("Fast charge", lassoList, S, "instantLassoChargeEnabled", setInstantLassoChargeEnabled)
 
     local fastChargePercentRow = createSliderRow("Boost %", lassoList, S.lassoFastChargePercent, function(value)
