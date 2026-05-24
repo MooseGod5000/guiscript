@@ -1,11 +1,10 @@
+local __lastStartupDebug = {}
+
 function automineStartupDebug(message)
     local text = "[AutoMine startup] " .. tostring(message)
-    pcall(function()
-        print(text)
-    end)
-    pcall(function()
-        warn(text)
-    end)
+	if __lastStartupDebug[text] then return end
+	__lastStartupDebug[text] = true
+    pcall(print, text)
 end
 
 automineStartupDebug("script reached top")
@@ -58,7 +57,7 @@ STARTUP_GATE_MAX_WAIT_SECONDS = 45
 STARTUP_GATE_GAME_LOADED_FALLBACK_SECONDS = 35
 
 function startupWarn(message)
-    automineStartupDebug(message)
+	pcall(warn, "[AutoMine startup] " .. tostring(message))
 end
 
 local function getStartupLoadingGate()
@@ -6658,6 +6657,7 @@ playerEspState = {
 LASSO_SILENT_AIM_MAX_DISTANCE = 200
 LASSO_FAST_THROW_MULTIPLIER = 3.5
 LASSO_FAST_HIT_CONFIRM_DELAY = 0.12
+WALL_BANG_PENETRATION = 100000
 gunFeatureState = {
     renderConnection = nil,
     warnedAimUnavailable = false,
@@ -6681,6 +6681,8 @@ gunFeatureState = {
     hookedProjectileHandler = nil,
     originalProjectileRaycast = nil,
 	projectileRaycastWrapper = nil,
+    originalProjectileCreate = nil,
+    projectileCreateWrapper = nil,
 	fastReloadItem = nil,
 	fastReloadOriginalPlayTrack = nil,
 	fastReloadWrapper = nil,
@@ -13710,7 +13712,8 @@ function resolveProjectileHandlerModule(forceRefresh)
     local modulesTable = resolveGameModules(forceRefresh)
     if isTable(modulesTable) then
         local projectileHandler = rawget(modulesTable, "projHandler") or modulesTable.projHandler
-        if isTable(projectileHandler) and type(projectileHandler.Raycast) == "function" then
+        if isTable(projectileHandler)
+            and (type(projectileHandler.Raycast) == "function" or type(projectileHandler.CreateProjectile) == "function") then
             return projectileHandler
         end
     end
@@ -13720,7 +13723,9 @@ function resolveProjectileHandlerModule(forceRefresh)
         local okLoad, loadedHandler = pcall(function()
             return globalModule:LoadModule("ProjectileHandler")
         end)
-        if okLoad and isTable(loadedHandler) and type(loadedHandler.Raycast) == "function" then
+        if okLoad
+            and isTable(loadedHandler)
+            and (type(loadedHandler.Raycast) == "function" or type(loadedHandler.CreateProjectile) == "function") then
             return loadedHandler
         end
     end
@@ -13730,7 +13735,9 @@ function resolveProjectileHandlerModule(forceRefresh)
     local handlerModule = worldFolder and worldFolder:FindFirstChild("ProjectileHandler")
     if handlerModule and handlerModule:IsA("ModuleScript") then
         local okRequire, requiredHandler = pcall(require, handlerModule)
-        if okRequire and isTable(requiredHandler) and type(requiredHandler.Raycast) == "function" then
+        if okRequire
+            and isTable(requiredHandler)
+            and (type(requiredHandler.Raycast) == "function" or type(requiredHandler.CreateProjectile) == "function") then
             return requiredHandler
         end
     end
@@ -14574,6 +14581,29 @@ function appendUniqueIgnore(ignoreList, instance)
     table.insert(ignoreList, instance)
 end
 
+function isWallBangProjectile(projectile)
+    if not isTable(projectile) or projectile.IsOwner ~= true then
+        return false
+    end
+
+    local projectileType = tostring(rawget(projectile, "Type") or projectile.Type or "")
+    return projectileType == "GunProjectile"
+        or projectileType == "ServerGunProjectile"
+        or projectileType == "GatlingProjectile"
+end
+
+function applyWallBangProjectilePenetration(projectile)
+    if not (S.wallBangEnabled and isWallBangProjectile(projectile)) then
+        return
+    end
+
+    projectile.PenetrationLeft = math.max(tonumber(projectile.PenetrationLeft) or 0, WALL_BANG_PENETRATION)
+    projectile.PenetrationFinished = nil
+    if type(projectile.PenetrationData) ~= "table" then
+        projectile.PenetrationData = {}
+    end
+end
+
 function restoreWallBangHook()
     local projectileHandler = gunFeatureState.hookedProjectileHandler
     if isTable(projectileHandler)
@@ -14581,10 +14611,17 @@ function restoreWallBangHook()
         and projectileHandler.Raycast == gunFeatureState.projectileRaycastWrapper then
         projectileHandler.Raycast = gunFeatureState.originalProjectileRaycast
     end
+    if isTable(projectileHandler)
+        and gunFeatureState.originalProjectileCreate
+        and projectileHandler.CreateProjectile == gunFeatureState.projectileCreateWrapper then
+        projectileHandler.CreateProjectile = gunFeatureState.originalProjectileCreate
+    end
 
     gunFeatureState.hookedProjectileHandler = nil
     gunFeatureState.originalProjectileRaycast = nil
     gunFeatureState.projectileRaycastWrapper = nil
+    gunFeatureState.originalProjectileCreate = nil
+    gunFeatureState.projectileCreateWrapper = nil
 end
 
 function ensureWallBangHook()
@@ -14615,6 +14652,17 @@ function ensureWallBangHook()
             return gunFeatureState.originalProjectileRaycast(table.unpack(packedArgs, 1, packedArgs.n))
         end
         projectileHandler.Raycast = gunFeatureState.projectileRaycastWrapper
+    end
+
+    local createProjectileFn = rawget(projectileHandler, "CreateProjectile") or projectileHandler.CreateProjectile
+    if type(createProjectileFn) == "function" and createProjectileFn ~= gunFeatureState.projectileCreateWrapper then
+        gunFeatureState.originalProjectileCreate = createProjectileFn
+        gunFeatureState.projectileCreateWrapper = function(...)
+            local projectile = gunFeatureState.originalProjectileCreate(...)
+            applyWallBangProjectilePenetration(projectile)
+            return projectile
+        end
+        projectileHandler.CreateProjectile = gunFeatureState.projectileCreateWrapper
     end
 end
 
