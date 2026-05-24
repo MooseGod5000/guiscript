@@ -292,6 +292,7 @@ local DEFAULTS = {
     lassoNoRopeLimitEnabled = false,
     fasterLassoEnabled = false,
     lassoTeleportEnabled = false,
+    instantRobEnabled = false,
     playerEspEnabled = false,
     playerEspMethods = {
         Text = true,
@@ -1129,6 +1130,7 @@ local function serializeState()
         lassoNoRopeLimitEnabled = S.lassoNoRopeLimitEnabled,
         fasterLassoEnabled = S.fasterLassoEnabled,
         lassoTeleportEnabled = S.lassoTeleportEnabled,
+        instantRobEnabled = S.instantRobEnabled,
         playerEspEnabled = S.playerEspEnabled,
         playerEspMethods = clonePlayerEspMethods(S.playerEspMethods),
         cameraNoclipEnabled = S.cameraNoclipEnabled,
@@ -1327,6 +1329,9 @@ function applySerializedState(data)
     end
     if type(data.lassoTeleportEnabled) == "boolean" then
         S.lassoTeleportEnabled = data.lassoTeleportEnabled
+    end
+    if type(data.instantRobEnabled) == "boolean" then
+        S.instantRobEnabled = data.instantRobEnabled
     end
     if type(data.playerEspEnabled) == "boolean" then
         S.playerEspEnabled = data.playerEspEnabled
@@ -6676,8 +6681,9 @@ LASSO_SILENT_AIM_MAX_DISTANCE = 200
 LASSO_FAST_THROW_MULTIPLIER = 3.5
 LASSO_FAST_HIT_CONFIRM_DELAY = 0.12
 LASSO_FAST_CHARGE_MIN_TIME = 0.05
-LASSO_TELEPORT_MAX_DISTANCE = 500
+LASSO_TELEPORT_MAX_DISTANCE = 29
 LASSO_TELEPORT_HIT_DELAY = 0.06
+LASSO_TELEPORT_RANGE_WARNING = "Players beyond 30 studs cannot be lasso tped."
 WALL_BANG_PENETRATION = 100000
 FAST_PROJECTILE_MAX_TRAVEL_TIME = 9.75
 FAST_PROJECTILE_TRACK_BUFFER = 1
@@ -6719,6 +6725,8 @@ gunFeatureState = {
     lassoSilentAimHooks = {},
     lassoParams = nil,
     originalLassoMaxLength = nil,
+    lastLassoTeleportRangeWarnAt = 0,
+    instantRobDurationOverrides = {},
 }
 
 GUN_RELOAD_TRACK_NAMES = {
@@ -6769,6 +6777,7 @@ function applyStoredStateToRuntime()
     S.lassoNoRopeLimitEnabled = S.lassoNoRopeLimitEnabled == true
     S.fasterLassoEnabled = S.fasterLassoEnabled == true
     S.lassoTeleportEnabled = S.lassoTeleportEnabled == true
+    S.instantRobEnabled = S.instantRobEnabled == true
     S.cameraNoclipEnabled = S.cameraNoclipEnabled == true
     S.customCursorEnabled = S.customCursorEnabled ~= false
     S.silentAimAccuracy = math.clamp(math.floor((tonumber(S.silentAimAccuracy) or 50) + 0.5), 1, 100)
@@ -12872,6 +12881,7 @@ function hasGunFeatureHooksEnabled()
         or S.lassoNoRopeLimitEnabled
         or S.fasterLassoEnabled
         or S.lassoTeleportEnabled
+        or S.instantRobEnabled
 end
 
 function hasGunAimVisualsEnabled()
@@ -14124,7 +14134,7 @@ function getNearestLassoTeleportTargetInfo(origin)
 
     local bestTarget = nil
     local bestDistance = nil
-    local maxDistance = tonumber(LASSO_TELEPORT_MAX_DISTANCE) or 500
+    local maxDistance = tonumber(LASSO_TELEPORT_MAX_DISTANCE) or 29
 
     for _, player in ipairs(_Players:GetPlayers()) do
         if player ~= localPlayer then
@@ -14142,6 +14152,14 @@ function getNearestLassoTeleportTargetInfo(origin)
     end
 
     return bestTarget
+end
+
+function notifyLassoTeleportRangeLimit(force)
+    local now = os.clock()
+    if force or (now - (tonumber(gunFeatureState.lastLassoTeleportRangeWarnAt) or 0)) >= 3 then
+        gunFeatureState.lastLassoTeleportRangeWarnAt = now
+        spawnNotification(LASSO_TELEPORT_RANGE_WARNING, "warning", true, 4)
+    end
 end
 
 function teleportThrownLassoToTarget(lassoItem, targetInfo)
@@ -14211,6 +14229,152 @@ function teleportThrownLassoToTarget(lassoItem, targetInfo)
             pcall(onHit, lassoItem, targetPart)
         end
     end)
+end
+
+function resolveObjectActionTypesModule(forceRefresh)
+    local cached = rawget(_G, "__AutoMineObjectActionTypes")
+    if not forceRefresh and isTable(cached) then
+        return cached
+    end
+
+    local globalModule = getAutoMineGlobalModule(forceRefresh)
+    if isTable(globalModule) and type(globalModule.LoadModule) == "function" then
+        local okLoad, loadedModule = pcall(function()
+            return globalModule:LoadModule("ObjectActionTypes")
+        end)
+        if okLoad and isTable(loadedModule) then
+            _G.__AutoMineObjectActionTypes = loadedModule
+            return loadedModule
+        end
+    end
+
+    local sharedModules = ReplicatedStorage:FindFirstChild("SharedModules")
+    local dataFolder = sharedModules and sharedModules:FindFirstChild("Data")
+    local moduleScript = dataFolder and dataFolder:FindFirstChild("ObjectActionTypes")
+    if moduleScript and moduleScript:IsA("ModuleScript") then
+        local okRequire, requiredModule = pcall(require, moduleScript)
+        if okRequire and isTable(requiredModule) then
+            _G.__AutoMineObjectActionTypes = requiredModule
+            return requiredModule
+        end
+    end
+
+    return nil
+end
+
+function getInstantRobActionText(groupKey, actionKey, actionData)
+    local text = tostring(groupKey or "") .. " " .. tostring(actionKey or "")
+    for _, key in ipairs({ "Description", "NetworkEvent", "Event", "Name", "ActionName" }) do
+        local value = rawget(actionData, key)
+        if value == nil then
+            value = actionData[key]
+        end
+        if type(value) == "string" then
+            text ..= " " .. value
+        end
+    end
+    return string.lower(text)
+end
+
+function shouldInstantRobAction(groupKey, actionKey, actionData)
+    if not isTable(actionData) then
+        return false
+    end
+    local duration = rawget(actionData, "Duration")
+    if duration == nil then
+        duration = actionData.Duration
+    end
+    if type(duration) ~= "number" or duration <= 0 then
+        return false
+    end
+    return string.find(getInstantRobActionText(groupKey, actionKey, actionData), "rob", 1, true) ~= nil
+end
+
+function forEachObjectActionDuration(actionTypes, callback)
+    if not isTable(actionTypes) or type(callback) ~= "function" then
+        return
+    end
+
+    for groupKey, groupData in pairs(actionTypes) do
+        if isTable(groupData) then
+            local directDuration = rawget(groupData, "Duration")
+            if directDuration == nil then
+                directDuration = groupData.Duration
+            end
+            if type(directDuration) == "number" then
+                callback(groupKey, groupKey, groupData)
+            end
+
+            for actionKey, actionData in pairs(groupData) do
+                if isTable(actionData) then
+                    local duration = rawget(actionData, "Duration")
+                    if duration == nil then
+                        duration = actionData.Duration
+                    end
+                    if type(duration) == "number" then
+                        callback(groupKey, actionKey, actionData)
+                    end
+
+                    for nestedKey, nestedAction in pairs(actionData) do
+                        if isTable(nestedAction) then
+                            local nestedDuration = rawget(nestedAction, "Duration")
+                            if nestedDuration == nil then
+                                nestedDuration = nestedAction.Duration
+                            end
+                            if type(nestedDuration) == "number" then
+                                callback(groupKey, tostring(actionKey) .. "." .. tostring(nestedKey), nestedAction)
+                            end
+                        end
+                    end
+                end
+            end
+        end
+    end
+end
+
+function ensureInstantRobHooks()
+    if not S.instantRobEnabled then
+        return
+    end
+
+    local actionTypes = resolveObjectActionTypesModule(false) or resolveObjectActionTypesModule(true)
+    if not isTable(actionTypes) then
+        return
+    end
+
+    local overrides = gunFeatureState.instantRobDurationOverrides
+    if type(overrides) ~= "table" then
+        overrides = {}
+        gunFeatureState.instantRobDurationOverrides = overrides
+    end
+
+    forEachObjectActionDuration(actionTypes, function(groupKey, actionKey, actionData)
+        if shouldInstantRobAction(groupKey, actionKey, actionData) then
+            if overrides[actionData] == nil then
+                overrides[actionData] = actionData.Duration
+            end
+            if actionData.Duration ~= 0 then
+                actionData.Duration = 0
+            end
+        end
+    end)
+end
+
+function restoreInstantRobHooks()
+    local overrides = gunFeatureState.instantRobDurationOverrides
+    if type(overrides) ~= "table" then
+        gunFeatureState.instantRobDurationOverrides = {}
+        return
+    end
+
+    for actionData, originalDuration in pairs(overrides) do
+        if isTable(actionData) then
+            pcall(function()
+                actionData.Duration = originalDuration
+            end)
+        end
+    end
+    gunFeatureState.instantRobDurationOverrides = {}
 end
 
 function shouldDelayFasterLassoHit(hitPart)
@@ -15011,6 +15175,9 @@ function ensureLassoSilentAimHook()
 
                     if S.lassoTeleportEnabled then
                         localTeleportTargetInfo = getNearestLassoTeleportTargetInfo(origin)
+                        if not localTeleportTargetInfo then
+                            notifyLassoTeleportRangeLimit(false)
+                        end
                     end
 
                     if S.lassoSilentAimEnabled or localTeleportTargetInfo then
@@ -15438,6 +15605,7 @@ function restoreGunFeatureHooks()
     restoreInstantLassoChargeHooks()
     restoreLassoSilentAimHooks()
     restoreLassoNoRopeLimitHook()
+    restoreInstantRobHooks()
     restoreEquipWhileSwimmingHooks()
     clearGunAimDrawings()
 end
@@ -15485,6 +15653,12 @@ function ensureGunFeatureHooks()
         restoreInstantLassoChargeHooks()
     end
 
+    if S.instantRobEnabled then
+        ensureInstantRobHooks()
+    else
+        restoreInstantRobHooks()
+    end
+
     if S.lassoSilentAimEnabled or S.fasterLassoEnabled or S.instantLassoChargeEnabled or S.lassoTeleportEnabled then
         ensureLassoSilentAimHook()
     else
@@ -15525,6 +15699,9 @@ function runGunFeaturePulse()
     end
     if S.instantLassoChargeEnabled then
         ensureInstantLassoChargeHooks()
+    end
+    if S.instantRobEnabled then
+        ensureInstantRobHooks()
     end
     if S.lassoSilentAimEnabled or S.fasterLassoEnabled or S.instantLassoChargeEnabled or S.lassoTeleportEnabled then
         ensureLassoSilentAimHook()
@@ -27670,7 +27847,15 @@ function setFasterLassoEnabled(isEnabled)
 end
 
 function setLassoTeleportEnabled(isEnabled)
-    return setSFeatureFlag("lassoTeleportEnabled", isEnabled, "lasso teleport")
+    local changed, nextValue = setSFeatureFlag("lassoTeleportEnabled", isEnabled, "lasso teleport")
+    if nextValue then
+        notifyLassoTeleportRangeLimit(true)
+    end
+    return changed, nextValue
+end
+
+function setInstantRobEnabled(isEnabled)
+    return setSFeatureFlag("instantRobEnabled", isEnabled, "instant rob")
 end
 
 function setPlayerEspEnabled(isEnabled)
@@ -33598,6 +33783,7 @@ function initWeaponsLassoSection(elementsList)
     createBoundToggleRow("No rope limit", lassoList, S, "lassoNoRopeLimitEnabled", setLassoNoRopeLimitEnabled)
     createBoundToggleRow("Faster lasso", lassoList, S, "fasterLassoEnabled", setFasterLassoEnabled)
     createBoundToggleRow("Lasso teleport", lassoList, S, "lassoTeleportEnabled", setLassoTeleportEnabled)
+    createBoundToggleRow("Instant rob", lassoList, S, "instantRobEnabled", setInstantRobEnabled)
     local fastChargeRow, _, fastChargeSync = createBoundToggleRow("Fast charge", lassoList, S, "instantLassoChargeEnabled", setInstantLassoChargeEnabled)
 
     local fastChargePercentRow = createSliderRow("Boost %", lassoList, S.lassoFastChargePercent, function(value)
