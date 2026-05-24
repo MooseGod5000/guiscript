@@ -6662,8 +6662,8 @@ playerEspState = {
 LASSO_SILENT_AIM_MAX_DISTANCE = 200
 LASSO_FAST_THROW_MULTIPLIER = 3.5
 LASSO_FAST_HIT_CONFIRM_DELAY = 0.12
-LASSO_FAST_CHARGE_MIN_TIME = 0.35
-LASSO_FAST_CHARGE_RATIO = 0.45
+LASSO_FAST_CHARGE_MIN_TIME = 0.8
+LASSO_FAST_CHARGE_RATIO = 0.9
 WALL_BANG_PENETRATION = 100000
 FAST_PROJECTILE_MAX_TRAVEL_TIME = 9.75
 FAST_PROJECTILE_TRACK_BUFFER = 1
@@ -14799,12 +14799,6 @@ function getFastLassoChargeTime(sharedData)
     return math.clamp(originalChargeTime * LASSO_FAST_CHARGE_RATIO, LASSO_FAST_CHARGE_MIN_TIME, originalChargeTime)
 end
 
-function getLassoChargeTimestampOffset(sharedData)
-    local originalChargeTime = tonumber(getOriginalLassoChargeTime(sharedData)) or 1
-    local fastChargeTime = getFastLassoChargeTime(sharedData)
-    return math.max(originalChargeTime - fastChargeTime + 0.05, 0)
-end
-
 function ensureInstantLassoChargeHooks()
     if not S.instantLassoChargeEnabled then
         return
@@ -14886,10 +14880,6 @@ function ensureLassoSilentAimHook()
             local localVelocityOverride = nil
             local localPlatformVelocity = Vector3.zero
             local localLassoCircle = nil
-            if S.instantLassoChargeEnabled and tostring(packedArgs[1] or "") == "ChargeLasso" and type(packedArgs[2]) == "number" then
-                local sharedData = rawget(self, "SharedData") or self.SharedData
-                packedArgs[2] = packedArgs[2] - getLassoChargeTimestampOffset(sharedData)
-            end
             if tostring(packedArgs[1] or "") == "ThrowLasso" then
                 local throwVelocity = typeof(packedArgs[3]) == "Vector3" and packedArgs[3] or nil
                 local platformVelocity = typeof(packedArgs[4]) == "Vector3" and packedArgs[4] or Vector3.zero
