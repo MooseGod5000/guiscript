@@ -259,6 +259,7 @@ local DEFAULTS = {
     safeTeleportEnabled = false,
     noJumpCooldownEnabled = false,
     noFallDamageEnabled = false,
+    noDamageSelfEnabled = false,
     noRagdollEnabled = false,
     autoBreakFreeEnabled = false,
     autoGetUpEnabled = false,
@@ -1101,6 +1102,7 @@ local function serializeState()
         safeTeleportEnabled = S.safeTeleportEnabled,
         noJumpCooldownEnabled = S.noJumpCooldownEnabled,
         noFallDamageEnabled = S.noFallDamageEnabled,
+        noDamageSelfEnabled = S.noDamageSelfEnabled,
         noRagdollEnabled = S.noRagdollEnabled,
         autoBreakFreeEnabled = S.autoBreakFreeEnabled,
         autoGetUpEnabled = S.autoGetUpEnabled,
@@ -1242,6 +1244,9 @@ function applySerializedState(data)
     end
     if type(data.noFallDamageEnabled) == "boolean" then
         S.noFallDamageEnabled = data.noFallDamageEnabled
+    end
+    if type(data.noDamageSelfEnabled) == "boolean" then
+        S.noDamageSelfEnabled = data.noDamageSelfEnabled
     end
     if type(data.noRagdollEnabled) == "boolean" then
         S.noRagdollEnabled = data.noRagdollEnabled
@@ -6633,6 +6638,7 @@ playerState = {
 	safeTeleportEnabled = S.safeTeleportEnabled,
 	noJumpCooldownEnabled = S.noJumpCooldownEnabled,
 	noFallDamageEnabled = S.noFallDamageEnabled,
+	noDamageSelfEnabled = S.noDamageSelfEnabled,
 	noRagdollEnabled = S.noRagdollEnabled,
 	autoBreakFreeEnabled = S.autoBreakFreeEnabled,
 	autoGetUpEnabled = S.autoGetUpEnabled,
@@ -6744,6 +6750,7 @@ function applyStoredStateToRuntime()
         playerState.safeTeleportEnabled = S.safeTeleportEnabled == true
         playerState.noJumpCooldownEnabled = S.noJumpCooldownEnabled == true
         playerState.noFallDamageEnabled = S.noFallDamageEnabled == true
+        playerState.noDamageSelfEnabled = S.noDamageSelfEnabled == true
         playerState.noRagdollEnabled = S.noRagdollEnabled == true
         playerState.autoBreakFreeEnabled = S.autoBreakFreeEnabled == true
         playerState.autoGetUpEnabled = S.autoGetUpEnabled == true
@@ -24469,6 +24476,7 @@ function hasPlayerStateNetworkHookEnabled()
 	return playerState.infiniteStaminaEnabled
         or playerState.safeTeleportEnabled
         or playerState.noFallDamageEnabled
+        or playerState.noDamageSelfEnabled
         or S.silentAimEnabled
         or S.fastProjectileEnabled
         or S.noSpreadEnabled
@@ -24490,6 +24498,10 @@ function shouldBlockPlayerStateRemote(remoteName)
 	end
 
 	if playerState.noFallDamageEnabled and (remoteName == "DamageSelf" or remoteName == "TrainSmack") then
+		return true
+	end
+
+	if playerState.noDamageSelfEnabled and remoteName == "DamageSelf" then
 		return true
 	end
 
@@ -27736,6 +27748,10 @@ end
 
 function setNoFallDamageEnabled(isEnabled)
 	return setPlayerFeatureFlag("noFallDamageEnabled", isEnabled, "no fall damage")
+end
+
+function setNoDamageSelfEnabled(isEnabled)
+	return setPlayerFeatureFlag("noDamageSelfEnabled", isEnabled, "no damageself")
 end
 
 function setNoRagdollEnabled(isEnabled)
@@ -34000,6 +34016,7 @@ function __westwareBuildPlayerTab()
 
     createBoundToggleRow("Infinite Jump", elementsList, playerState, "noJumpCooldownEnabled", setNoJumpCooldownEnabled)
     createBoundToggleRow("No Fall Damage", elementsList, playerState, "noFallDamageEnabled", setNoFallDamageEnabled)
+    createBoundToggleRow("No Damageself", elementsList, playerState, "noDamageSelfEnabled", setNoDamageSelfEnabled)
     createBoundToggleRow("No Ragdoll", elementsList, playerState, "noRagdollEnabled", setNoRagdollEnabled)
     createBoundToggleRow("Auto Break Lasso", elementsList, playerState, "autoBreakFreeEnabled", setAutoBreakFreeEnabled)
     createBoundToggleRow("Auto Get Up", elementsList, playerState, "autoGetUpEnabled", setAutoGetUpEnabled)
