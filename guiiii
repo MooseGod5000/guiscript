@@ -6786,7 +6786,9 @@ playerState = {
 	horseOrbitSeatJoint = nil,
 	horseOrbitSeatPart1 = nil,
 	horseOrbitSeatWasEnabled = nil,
-	horseOrbitSavedPlayerState = nil,
+	horseOrbitLastMountAttemptAt = 0,
+	horseOrbitUnmountHooks = {},
+	horseOrbitAllowUnmount = false,
 	cactusTouchDisabledInstances = {},
 	cactusDescendantConnections = {},
 	cactusFoliageAddedConnection = nil,
@@ -25141,6 +25143,26 @@ function resolveRidingAnimal(forceRefresh)
 	return isTable(ridingAnimal) and ridingAnimal or nil
 end
 
+function resolveHorseOrbitWildLife(forceRefresh)
+	local globalModule = getAutoMineGlobalModule(forceRefresh)
+	if not isTable(globalModule) then
+		return nil
+	end
+
+	local wildLife = rawget(globalModule, "WildLife") or globalModule.WildLife
+	if not isTable(wildLife) and type(globalModule.LoadModule) == "function" then
+		local okLoad, loadedWildLife = pcall(function()
+			return globalModule:LoadModule("WildLife")
+		end)
+		if okLoad and isTable(loadedWildLife) then
+			wildLife = loadedWildLife
+			globalModule.WildLife = loadedWildLife
+		end
+	end
+
+	return isTable(wildLife) and wildLife or nil
+end
+
 function refillHorseStamina(ridingAnimal)
 	if not isTable(ridingAnimal) then
 		return false
@@ -25377,7 +25399,240 @@ HORSE_ORBIT_GROUND_RAY_HEIGHT = 34
 HORSE_ORBIT_GROUND_RAY_DEPTH = 90
 HORSE_ORBIT_MIN_HOVER_HEIGHT = 2.4
 HORSE_ORBIT_MAX_SPEED = 34
-HORSE_ORBIT_SNAP_DISTANCE = 16
+HORSE_ORBIT_MOUNT_RETRY_SECONDS = 0.35
+
+function isHorseOrbitAnimalCandidate(ridingAnimal)
+	if not isTable(ridingAnimal) or ridingAnimal.Active == false then
+		return false
+	end
+	if ridingAnimal.Ragdolled or ridingAnimal.IsWakingUp then
+		return false
+	end
+
+	local animalType = tostring(rawget(ridingAnimal, "AnimalType") or ridingAnimal.AnimalType or "")
+	local horseBreed = rawget(ridingAnimal, "HorseBreed") or ridingAnimal.HorseBreed
+	if animalType ~= "Horse" and animalType ~= "SkeletonHorse" and horseBreed == nil then
+		return false
+	end
+
+	local character = rawget(ridingAnimal, "character") or ridingAnimal.character
+	if typeof(character) == "Instance" then
+		if character.Name == "WagonHorse" or character.Name == "HorseWagon" then
+			return false
+		end
+	end
+
+	return true
+end
+
+function isHorseOrbitOwnedAnimal(ridingAnimal)
+	if not isHorseOrbitAnimalCandidate(ridingAnimal) then
+		return false
+	end
+
+	local owner = rawget(ridingAnimal, "Owner") or ridingAnimal.Owner
+	local rider = rawget(ridingAnimal, "Rider") or ridingAnimal.Rider
+	if owner == localPlayer or rider == localPlayer then
+		return true
+	end
+
+	local character = rawget(ridingAnimal, "character") or ridingAnimal.character
+	if typeof(character) == "Instance" then
+		local ownerValue = character:FindFirstChild("Owner")
+		if ownerValue and ownerValue.Value == localPlayer then
+			return true
+		end
+		local riderValue = character:FindFirstChild("Rider")
+		if riderValue and riderValue.Value == localPlayer then
+			return true
+		end
+	end
+
+	local replicatedState = resolveGlobalReplicatedState(false) or resolveGlobalReplicatedState(true)
+	local state = isTable(replicatedState) and (rawget(replicatedState, "State") or replicatedState.State) or nil
+	local calledAnimal = isTable(state) and (rawget(state, "CalledAnimal") or state.CalledAnimal) or nil
+	if calledAnimal ~= nil then
+		if calledAnimal == ridingAnimal or calledAnimal == character then
+			return true
+		end
+		local id = rawget(ridingAnimal, "ID") or ridingAnimal.ID
+		if id ~= nil and calledAnimal == id then
+			return true
+		end
+		if typeof(character) == "Instance" then
+			local attributeId = character:GetAttribute("ID")
+			if attributeId ~= nil and calledAnimal == attributeId then
+				return true
+			end
+		end
+	end
+
+	return false
+end
+
+function resolveHorseOrbitCandidateAnimal(forceRefresh)
+	local ridingAnimal = resolveRidingAnimal(forceRefresh)
+	if isHorseOrbitAnimalCandidate(ridingAnimal) then
+		return ridingAnimal
+	end
+
+	local wildLife = resolveHorseOrbitWildLife(forceRefresh)
+	if not isTable(wildLife) then
+		return nil
+	end
+
+	local wildLifeObjects
+	local getWildLife = rawget(wildLife, "GetWildLife") or wildLife.GetWildLife
+	if type(getWildLife) == "function" then
+		local okWildLife, result = pcall(getWildLife, wildLife)
+		if okWildLife and isTable(result) then
+			wildLifeObjects = result
+		end
+	end
+
+	local nearestHorse = nil
+	local nearestDistance = math.huge
+	local character = getWorldCharacterForPlayer(localPlayer) or (localPlayer and localPlayer.Character)
+	local rootPart = getRootPart(character)
+
+	if isTable(wildLifeObjects) then
+		for _, wildLifeObject in pairs(wildLifeObjects) do
+			if isHorseOrbitAnimalCandidate(wildLifeObject) then
+				if isHorseOrbitOwnedAnimal(wildLifeObject) then
+					return wildLifeObject
+				end
+
+				local horseRoot = getHorseOrbitRoot(wildLifeObject)
+				if rootPart and horseRoot then
+					local distance = (horseRoot.Position - rootPart.Position).Magnitude
+					if distance < nearestDistance then
+						nearestDistance = distance
+						nearestHorse = wildLifeObject
+					end
+				end
+			end
+		end
+	end
+
+	if nearestHorse and nearestDistance <= 90 then
+		return nearestHorse
+	end
+
+	return nil
+end
+
+function installHorseOrbitUnmountHook(ridingAnimal)
+	if not isTable(ridingAnimal) then
+		return false
+	end
+	if type(playerState.horseOrbitUnmountHooks) ~= "table" then
+		playerState.horseOrbitUnmountHooks = {}
+	end
+
+	local hooks = playerState.horseOrbitUnmountHooks
+	if hooks[ridingAnimal] then
+		return true
+	end
+
+	local originalUnMount = rawget(ridingAnimal, "UnMount") or ridingAnimal.UnMount
+	if type(originalUnMount) ~= "function" then
+		return false
+	end
+
+	local hook = {
+		originalUnMount = originalUnMount,
+	}
+	hook.unMountWrapper = function(self, ...)
+		if playerState.horseOrbitEnabled and not playerState.horseOrbitAllowUnmount then
+			local wildLife = resolveHorseOrbitWildLife(false)
+			if isTable(wildLife) then
+				pcall(function()
+					wildLife.RidingAnimal = isTable(self) and self or ridingAnimal
+				end)
+			end
+			return nil
+		end
+		return hook.originalUnMount(self, ...)
+	end
+
+	pcall(function()
+		ridingAnimal.UnMount = hook.unMountWrapper
+	end)
+	hooks[ridingAnimal] = hook
+	return true
+end
+
+function restoreHorseOrbitUnmountHooks()
+	local hooks = playerState.horseOrbitUnmountHooks
+	if type(hooks) == "table" then
+		for ridingAnimal, hook in pairs(hooks) do
+			if isTable(ridingAnimal) and isTable(hook) then
+				pcall(function()
+					if ridingAnimal.UnMount == hook.unMountWrapper then
+						ridingAnimal.UnMount = hook.originalUnMount
+					end
+				end)
+			end
+		end
+	end
+	playerState.horseOrbitUnmountHooks = {}
+end
+
+function requestHorseOrbitMount(ridingAnimal, skipLocalMount)
+	if not isHorseOrbitAnimalCandidate(ridingAnimal) then
+		return false
+	end
+
+	local now = os.clock()
+	if now - (tonumber(playerState.horseOrbitLastMountAttemptAt) or 0) < HORSE_ORBIT_MOUNT_RETRY_SECONDS then
+		return false
+	end
+	playerState.horseOrbitLastMountAttemptAt = now
+
+	clearHorseRagdollState(ridingAnimal)
+	installHorseAntiRagdollHook(ridingAnimal)
+	installHorseOrbitUnmountHook(ridingAnimal)
+
+	local character = rawget(ridingAnimal, "character") or ridingAnimal.character
+	local network = resolveGlobalNetwork(false) or resolveGlobalNetwork(true)
+	if network and type(network.FireServer) == "function" and typeof(character) == "Instance" then
+		pcall(function()
+			network:FireServer("MountAnimal", character)
+		end)
+	end
+
+	if not skipLocalMount and type(ridingAnimal.Mount) == "function" then
+		pcall(function()
+			ridingAnimal:Mount()
+		end)
+	end
+
+	local wildLife = resolveHorseOrbitWildLife(false) or resolveHorseOrbitWildLife(true)
+	if isTable(wildLife) then
+		pcall(function()
+			wildLife.RidingAnimal = ridingAnimal
+		end)
+	end
+
+	return true
+end
+
+function ensureHorseOrbitMounted()
+	local ridingAnimal = resolveRidingAnimal(false)
+	if isHorseOrbitAnimalCandidate(ridingAnimal) then
+		installHorseOrbitUnmountHook(ridingAnimal)
+		requestHorseOrbitMount(ridingAnimal, true)
+		return ridingAnimal
+	end
+
+	local candidate = resolveHorseOrbitCandidateAnimal(false) or resolveHorseOrbitCandidateAnimal(true)
+	if not candidate then
+		return nil
+	end
+
+	requestHorseOrbitMount(candidate)
+	return resolveRidingAnimal(false) or candidate
+end
 
 function getHorseOrbitRoot(ridingAnimal)
 	if not isTable(ridingAnimal) then
@@ -25485,50 +25740,6 @@ function setHorseOrbitCharacterMassless(character, isMassless)
 	end
 end
 
-function clearHorseOrbitPlayerStateFlags(playerCharacter)
-	if not isTable(playerCharacter) then
-		return
-	end
-
-	local state = rawget(playerCharacter, "State") or playerCharacter.State
-	if not isTable(state) then
-		return
-	end
-
-	if not playerState.horseOrbitSavedPlayerState or playerState.horseOrbitSavedPlayerState.state ~= state then
-		playerState.horseOrbitSavedPlayerState = {
-			state = state,
-			OnAnimal = rawget(state, "OnAnimal"),
-			PassengerOf = rawget(state, "PassengerOf"),
-			Seated = rawget(state, "Seated"),
-		}
-	end
-
-	pcall(function()
-		rawset(state, "OnAnimal", nil)
-		rawset(state, "PassengerOf", nil)
-		rawset(state, "Seated", false)
-	end)
-end
-
-function restoreHorseOrbitPlayerStateFlags(shouldRestoreMountedState)
-	local savedState = playerState.horseOrbitSavedPlayerState
-	if isTable(savedState) and isTable(savedState.state) then
-		pcall(function()
-			if shouldRestoreMountedState then
-				rawset(savedState.state, "OnAnimal", savedState.OnAnimal)
-				rawset(savedState.state, "PassengerOf", savedState.PassengerOf)
-				rawset(savedState.state, "Seated", savedState.Seated)
-			else
-				rawset(savedState.state, "OnAnimal", nil)
-				rawset(savedState.state, "PassengerOf", nil)
-				rawset(savedState.state, "Seated", false)
-			end
-		end)
-	end
-	playerState.horseOrbitSavedPlayerState = nil
-end
-
 function applyHorseOrbitFreePlayerState(character, rootPart, humanoid)
 	detachHorseOrbitSeat(rootPart)
 
@@ -25558,20 +25769,6 @@ function applyHorseOrbitFreePlayerState(character, rootPart, humanoid)
 	end
 
 	setHorseOrbitCharacterMassless(character, false)
-
-	local playerCharacter = resolvePlayerCharacterModule(false) or resolvePlayerCharacterModule(true)
-	if isTable(playerCharacter) then
-		clearHorseOrbitPlayerStateFlags(playerCharacter)
-		local animationHandler = rawget(playerCharacter, "AnimationHandler") or playerCharacter.AnimationHandler
-		if isTable(animationHandler) then
-			pcall(function()
-				animationHandler:StopTrack("RideAnimal", 0.05)
-			end)
-			pcall(function()
-				animationHandler:StopTrack("GetOnHorse", 0.05)
-			end)
-		end
-	end
 end
 
 function restoreHorseOrbitPlayerAttachment(shouldRestoreMountedState)
@@ -25622,7 +25819,6 @@ function restoreHorseOrbitPlayerAttachment(shouldRestoreMountedState)
 		setHorseOrbitCharacterMassless(character, false)
 	end
 
-	restoreHorseOrbitPlayerStateFlags(canRestoreMountedAttachment)
 	playerState.horseOrbitSeatJoint = nil
 	playerState.horseOrbitSeatPart1 = nil
 	playerState.horseOrbitSeatWasEnabled = nil
@@ -25666,9 +25862,6 @@ function applyHorseOrbitAnimalMotion(ridingAnimal, character, rootPart, dt)
 	if orbitVelocity.Magnitude > HORSE_ORBIT_MAX_SPEED then
 		orbitVelocity = orbitVelocity.Unit * HORSE_ORBIT_MAX_SPEED
 	end
-	local verticalError = math.abs(targetPosition.Y - horseRoot.Position.Y)
-	local shouldSnap = horizontalError.Magnitude > HORSE_ORBIT_SNAP_DISTANCE or verticalError > 8
-	local facingCFrame = shouldSnap and targetCFrame or CFrame.new(horseRoot.Position, horseRoot.Position + tangent)
 
 	pcall(function()
 		ridingAnimal.Movement = nil
@@ -25705,7 +25898,7 @@ function applyHorseOrbitAnimalMotion(ridingAnimal, character, rootPart, dt)
 	clearHorseRagdollState(ridingAnimal)
 
 	pcall(function()
-		horseRoot.CFrame = facingCFrame
+		horseRoot.CFrame = targetCFrame
 	end)
 	pcall(function()
 		horseRoot.AssemblyLinearVelocity = Vector3.new(orbitVelocity.X, 0, orbitVelocity.Z)
@@ -25730,17 +25923,17 @@ function applyHorseOrbitAnimalMotion(ridingAnimal, character, rootPart, dt)
 	end
 
 	pcall(function()
-		ridingAnimal.LastRootCFrame = facingCFrame
+		ridingAnimal.LastRootCFrame = targetCFrame
 		ridingAnimal.ApplyServerCFrameIfCFrameIs = nil
 	end)
 	return true
 end
 
 function applyHorseOrbitPulse(dt)
-	local ridingAnimal = resolveRidingAnimal(false) or resolveRidingAnimal(true)
+	local ridingAnimal = ensureHorseOrbitMounted()
 	if not ridingAnimal then
 		restoreHorseOrbitPlayerAttachment(false)
-		pushDebugRateLimited("horse_orbit_waiting_for_mount", "horse orbit: mount a horse first", 4)
+		pushDebugRateLimited("horse_orbit_waiting_for_horse", "horse orbit: waiting for your horse", 4)
 		return false
 	end
 
@@ -25765,10 +25958,11 @@ function restoreHorseOrbitHooks()
 	end
 	playerState.horseOrbitConnection = nil
 
+	local hasUnmountHooks = type(playerState.horseOrbitUnmountHooks) == "table" and next(playerState.horseOrbitUnmountHooks) ~= nil
 	local hadActiveOrbit = playerState.horseOrbitWasActive
 		or playerState.horseOrbitSeatJoint ~= nil
 		or playerState.horseOrbitLastAnimal ~= nil
-		or playerState.horseOrbitSavedPlayerState ~= nil
+		or hasUnmountHooks
 	if not hadActiveOrbit then
 		return
 	end
@@ -25795,6 +25989,7 @@ function restoreHorseOrbitHooks()
 
 	playerState.horseOrbitLastAnimal = nil
 	playerState.horseOrbitWasActive = false
+	restoreHorseOrbitUnmountHooks()
 end
 
 function ensureHorseOrbitHooks()
