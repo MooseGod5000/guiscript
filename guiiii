@@ -14262,6 +14262,46 @@ function resolveObjectActionTypesModule(forceRefresh)
     return nil
 end
 
+function resolvePlayerActionTypesModule(forceRefresh)
+    local cached = rawget(_G, "__AutoMinePlayerActionTypes")
+    if not forceRefresh and isTable(cached) then
+        return cached
+    end
+
+    local globalModule = getAutoMineGlobalModule(forceRefresh)
+    if isTable(globalModule) and type(globalModule.LoadModule) == "function" then
+        local okLoad, loadedModule = pcall(function()
+            return globalModule:LoadModule("PlayerActionTypes")
+        end)
+        if okLoad and isTable(loadedModule) then
+            _G.__AutoMinePlayerActionTypes = loadedModule
+            return loadedModule
+        end
+    end
+
+    local sharedModules = ReplicatedStorage:FindFirstChild("SharedModules")
+    local dataFolder = sharedModules and sharedModules:FindFirstChild("Data")
+    local modulesFolder = ReplicatedStorage:FindFirstChild("Modules")
+    local uiFolder = modulesFolder and modulesFolder:FindFirstChild("UI")
+
+    for _, moduleScript in ipairs({
+        dataFolder and dataFolder:FindFirstChild("PlayerActionTypes"),
+        uiFolder and uiFolder:FindFirstChild("PlayerActionTypes"),
+        sharedModules and sharedModules:FindFirstChild("PlayerActionTypes"),
+        modulesFolder and modulesFolder:FindFirstChild("PlayerActionTypes"),
+    }) do
+        if moduleScript and moduleScript:IsA("ModuleScript") then
+            local okRequire, requiredModule = pcall(require, moduleScript)
+            if okRequire and isTable(requiredModule) then
+                _G.__AutoMinePlayerActionTypes = requiredModule
+                return requiredModule
+            end
+        end
+    end
+
+    return nil
+end
+
 function getInstantRobActionText(groupKey, actionKey, actionData)
     local text = tostring(groupKey or "") .. " " .. tostring(actionKey or "")
     for _, key in ipairs({ "Description", "NetworkEvent", "Event", "Name", "ActionName" }) do
@@ -14332,14 +14372,17 @@ function forEachObjectActionDuration(actionTypes, callback)
     end
 end
 
-function ensureInstantRobHooks()
-    if not S.instantRobEnabled then
-        return
+function applyInstantRobDurationOverride(actionData)
+    if not isTable(actionData) then
+        return false
     end
 
-    local actionTypes = resolveObjectActionTypesModule(false) or resolveObjectActionTypesModule(true)
-    if not isTable(actionTypes) then
-        return
+    local duration = rawget(actionData, "Duration")
+    if duration == nil then
+        duration = actionData.Duration
+    end
+    if type(duration) ~= "number" or duration <= 0 then
+        return false
     end
 
     local overrides = gunFeatureState.instantRobDurationOverrides
@@ -14348,14 +14391,31 @@ function ensureInstantRobHooks()
         gunFeatureState.instantRobDurationOverrides = overrides
     end
 
-    forEachObjectActionDuration(actionTypes, function(groupKey, actionKey, actionData)
+    if overrides[actionData] == nil then
+        overrides[actionData] = duration
+    end
+    if actionData.Duration ~= 0 then
+        actionData.Duration = 0
+    end
+    return true
+end
+
+function ensureInstantRobHooks()
+    if not S.instantRobEnabled then
+        return
+    end
+
+    local playerActionTypes = resolvePlayerActionTypesModule(false) or resolvePlayerActionTypesModule(true)
+    if not isTable(playerActionTypes) then
+        return
+    end
+
+    local robAction = rawget(playerActionTypes, "Rob") or playerActionTypes.Rob
+    applyInstantRobDurationOverride(robAction)
+
+    forEachObjectActionDuration(playerActionTypes, function(groupKey, actionKey, actionData)
         if shouldInstantRobAction(groupKey, actionKey, actionData) then
-            if overrides[actionData] == nil then
-                overrides[actionData] = actionData.Duration
-            end
-            if actionData.Duration ~= 0 then
-                actionData.Duration = 0
-            end
+            applyInstantRobDurationOverride(actionData)
         end
     end)
 end
