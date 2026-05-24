@@ -271,6 +271,7 @@ local DEFAULTS = {
     equipWhileSwimmingEnabled = false,
     infiniteOxygenEnabled = false,
     disableWaterLogicEnabled = false,
+    horseInfiniteStaminaEnabled = false,
     silentAimEnabled = false,
     silentAimBodyTarget = "Head",
     silentAimMode = "FOV",
@@ -1061,6 +1062,7 @@ if type(tweenMoveSpeed) == "number" then
         end
         S.infiniteOxygenEnabled = playerState.infiniteOxygenEnabled == true
         S.disableWaterLogicEnabled = playerState.disableWaterLogicEnabled == true
+        S.horseInfiniteStaminaEnabled = playerState.horseInfiniteStaminaEnabled == true
     end
     if type(autoPickupEnabled) == "boolean" then
         S.autoPickupEnabled = autoPickupEnabled
@@ -1128,6 +1130,7 @@ local function serializeState()
         equipWhileSwimmingEnabled = S.equipWhileSwimmingEnabled,
         infiniteOxygenEnabled = S.infiniteOxygenEnabled,
         disableWaterLogicEnabled = S.disableWaterLogicEnabled,
+        horseInfiniteStaminaEnabled = S.horseInfiniteStaminaEnabled,
         silentAimEnabled = S.silentAimEnabled,
         silentAimBodyTarget = S.silentAimBodyTarget,
         silentAimMode = S.silentAimMode,
@@ -1301,6 +1304,9 @@ function applySerializedState(data)
     end
     if type(data.disableWaterLogicEnabled) == "boolean" then
         S.disableWaterLogicEnabled = data.disableWaterLogicEnabled
+    end
+    if type(data.horseInfiniteStaminaEnabled) == "boolean" then
+        S.horseInfiniteStaminaEnabled = data.horseInfiniteStaminaEnabled
     end
     if type(data.silentAimEnabled) == "boolean" then
         S.silentAimEnabled = data.silentAimEnabled
@@ -6698,6 +6704,7 @@ playerState = {
 	equipWhileSwimmingEnabled = S.equipWhileSwimmingEnabled,
 	infiniteOxygenEnabled = S.infiniteOxygenEnabled,
 	disableWaterLogicEnabled = S.disableWaterLogicEnabled,
+	horseInfiniteStaminaEnabled = S.horseInfiniteStaminaEnabled,
 	displayStamina = 100,
 	hookedNetwork = nil,
 	originalNetworkFireServer = nil,
@@ -6836,6 +6843,7 @@ function applyStoredStateToRuntime()
         playerState.equipWhileSwimmingEnabled = S.equipWhileSwimmingEnabled == true
         playerState.infiniteOxygenEnabled = S.infiniteOxygenEnabled == true
         playerState.disableWaterLogicEnabled = S.disableWaterLogicEnabled == true
+        playerState.horseInfiniteStaminaEnabled = S.horseInfiniteStaminaEnabled == true
     end
 
     _G.__AutoMineNoRecoilEnabled = S.noRecoilEnabled == true
@@ -24933,6 +24941,7 @@ function hasPlayerStateFeatureHooksEnabled()
 		or playerState.noRagdollEnabled
 		or playerState.autoBreakFreeEnabled
 		or playerState.autoGetUpEnabled
+		or playerState.horseInfiniteStaminaEnabled
         or playerState.equipWhileSwimmingEnabled
         or hasGunFeatureHooksEnabled()
 end
@@ -25053,6 +25062,88 @@ function ensureInfiniteStaminaHooks()
 	for _, stateTable in ipairs(stateTables) do
 		installInfiniteStaminaStateHook(stateTable)
 	end
+end
+
+function resolveRidingAnimal(forceRefresh)
+	local globalModule = getAutoMineGlobalModule(forceRefresh)
+	if not isTable(globalModule) then
+		return nil
+	end
+
+	local wildLife = rawget(globalModule, "WildLife") or globalModule.WildLife
+	if not isTable(wildLife) and type(globalModule.LoadModule) == "function" then
+		local okLoad, loadedWildLife = pcall(function()
+			return globalModule:LoadModule("WildLife")
+		end)
+		if okLoad and isTable(loadedWildLife) then
+			wildLife = loadedWildLife
+			globalModule.WildLife = loadedWildLife
+		end
+	end
+	if not isTable(wildLife) then
+		return nil
+	end
+
+	local getRidingAnimal = rawget(wildLife, "GetRidingAnimal") or wildLife.GetRidingAnimal
+	if type(getRidingAnimal) == "function" then
+		local okGet, ridingAnimal = pcall(getRidingAnimal, wildLife)
+		if okGet and isTable(ridingAnimal) then
+			return ridingAnimal
+		end
+	end
+
+	local ridingAnimal = rawget(wildLife, "RidingAnimal") or wildLife.RidingAnimal
+	return isTable(ridingAnimal) and ridingAnimal or nil
+end
+
+function refillHorseStamina(ridingAnimal)
+	if not isTable(ridingAnimal) then
+		return false
+	end
+
+	local maxBoosts = tonumber(rawget(ridingAnimal, "MaxBoosts") or ridingAnimal.MaxBoosts)
+	if not maxBoosts or maxBoosts <= 0 then
+		maxBoosts = tonumber(rawget(ridingAnimal, "StaminaValue") or ridingAnimal.StaminaValue)
+	end
+	if not maxBoosts or maxBoosts <= 0 then
+		return false
+	end
+
+	pcall(function()
+		ridingAnimal.Boosts = maxBoosts
+		ridingAnimal.ExhaustedWarning = nil
+	end)
+	return true
+end
+
+function restoreHorseInfiniteStaminaHooks()
+	local connection = playerState.horseInfiniteStaminaConnection
+	if connection then
+		pcall(function()
+			connection:Disconnect()
+		end)
+	end
+	playerState.horseInfiniteStaminaConnection = nil
+end
+
+function ensureHorseInfiniteStaminaHooks()
+	if not playerState.horseInfiniteStaminaEnabled then
+		return
+	end
+
+	refillHorseStamina(resolveRidingAnimal(false) or resolveRidingAnimal(true))
+
+	if playerState.horseInfiniteStaminaConnection then
+		return
+	end
+
+	playerState.horseInfiniteStaminaConnection = _RunService.Heartbeat:Connect(function()
+		if not isSessionActive() or not playerState.horseInfiniteStaminaEnabled then
+			restoreHorseInfiniteStaminaHooks()
+			return
+		end
+		refillHorseStamina(resolveRidingAnimal(false) or resolveRidingAnimal(true))
+	end)
 end
 
 function restoreSafeTeleportHooks()
@@ -25781,6 +25872,12 @@ function ensurePlayerFeatureHooks()
 		restoreSpeedChangerHooks()
 	end
 
+	if playerState.horseInfiniteStaminaEnabled then
+		ensureHorseInfiniteStaminaHooks()
+	else
+		restoreHorseInfiniteStaminaHooks()
+	end
+
 	if playerState.noCactusDamageEnabled then
 		ensureNoCactusDamageHooks()
 	else
@@ -25818,6 +25915,9 @@ function ensurePlayerFeatureHooks()
 				if playerState.speedChangerEnabled then
 					ensureSpeedChangerHooks()
 				end
+				if playerState.horseInfiniteStaminaEnabled then
+					ensureHorseInfiniteStaminaHooks()
+				end
 				if playerState.noCactusDamageEnabled then
 					ensureNoCactusDamageHooks()
 				end
@@ -25833,6 +25933,7 @@ function ensurePlayerFeatureHooks()
             restoreNoJumpCooldownHooks()
 			restoreNoRollCooldownHooks()
 			restoreSpeedChangerHooks()
+			restoreHorseInfiniteStaminaHooks()
 			restoreNoCactusDamageHooks()
             restoreAutoBreakFreeHooks()
             restoreGunFeatureHooks()
@@ -28517,6 +28618,10 @@ end
 
 function setSpeedChangerEnabled(isEnabled)
 	return setPlayerFeatureFlag("speedChangerEnabled", isEnabled, "speed changer")
+end
+
+function setHorseInfiniteStaminaEnabled(isEnabled)
+	return setPlayerFeatureFlag("horseInfiniteStaminaEnabled", isEnabled, "horse infinite stamina")
 end
 
 function setSpeedChangerValue(value, skipPersistence)
@@ -34807,26 +34912,35 @@ function __westwareBuildPlayerTab()
     tabTitles["PLAYER"] = title
     _currentRegistryTab = "PLAYER"
 
-    local playerToggleRow, _, infiniteStaminaSync = createBoundToggleRow("Infinite Stamina", elementsList, playerState, "infiniteStaminaEnabled", setInfiniteStaminaEnabled)
+    local characterList, characterHeaderLabel = createCollapsibleSection("Character", elementsList)
+    characterHeaderLabel.RichText = true
+    characterHeaderLabel.Text = '<font color="#d9d9d9">Character</font>'
+
+    local playerToggleRow, _, infiniteStaminaSync = createBoundToggleRow("Infinite Stamina", characterList, playerState, "infiniteStaminaEnabled", setInfiniteStaminaEnabled)
     playerUi.infiniteStaminaButton = playerToggleRow
     playerUi.infiniteStaminaSync = infiniteStaminaSync
 
-    createBoundToggleRow("Infinite Jump", elementsList, playerState, "noJumpCooldownEnabled", setNoJumpCooldownEnabled)
-    createBoundToggleRow("No Roll Cooldown", elementsList, playerState, "noRollCooldownEnabled", setNoRollCooldownEnabled)
-    local _, _, speedChangerSync = createBoundToggleRow("Speed changer", elementsList, playerState, "speedChangerEnabled", setSpeedChangerEnabled)
-    local speedChangerSliderRow, speedChangerSliderUpdate = createSliderRow("Speed", elementsList, getSpeedChangerValue(), function(value)
+    createBoundToggleRow("Infinite Jump", characterList, playerState, "noJumpCooldownEnabled", setNoJumpCooldownEnabled)
+    createBoundToggleRow("No Roll Cooldown", characterList, playerState, "noRollCooldownEnabled", setNoRollCooldownEnabled)
+    local _, _, speedChangerSync = createBoundToggleRow("Speed changer", characterList, playerState, "speedChangerEnabled", setSpeedChangerEnabled)
+    local speedChangerSliderRow, speedChangerSliderUpdate = createSliderRow("Speed", characterList, getSpeedChangerValue(), function(value)
         setSpeedChangerValue(value)
     end, function()
         return getSpeedChangerValue()
     end, PLAYER_SPEED_CHANGER_MIN, PLAYER_SPEED_CHANGER_MAX)
-    createBoundToggleRow("No Damageself", elementsList, playerState, "noDamageSelfEnabled", setNoDamageSelfEnabled)
-    createBoundToggleRow("No Cactus Damage", elementsList, playerState, "noCactusDamageEnabled", setNoCactusDamageEnabled)
-    createBoundToggleRow("No Ragdoll", elementsList, playerState, "noRagdollEnabled", setNoRagdollEnabled)
-    createBoundToggleRow("Auto Break Lasso", elementsList, playerState, "autoBreakFreeEnabled", setAutoBreakFreeEnabled)
-    createBoundToggleRow("Auto Get Up", elementsList, playerState, "autoGetUpEnabled", setAutoGetUpEnabled)
-    createBoundToggleRow("Infinite Oxygen", elementsList, playerState, "infiniteOxygenEnabled", setInfiniteOxygenEnabled)
-    createBoundToggleRow("Disable Water Logic", elementsList, playerState, "disableWaterLogicEnabled", setDisableWaterLogicEnabled)
-    createBoundToggleRow("Equip while swimming", elementsList, playerState, "equipWhileSwimmingEnabled", setEquipWhileSwimmingEnabled)
+    createBoundToggleRow("No Damageself", characterList, playerState, "noDamageSelfEnabled", setNoDamageSelfEnabled)
+    createBoundToggleRow("No Cactus Damage", characterList, playerState, "noCactusDamageEnabled", setNoCactusDamageEnabled)
+    createBoundToggleRow("No Ragdoll", characterList, playerState, "noRagdollEnabled", setNoRagdollEnabled)
+    createBoundToggleRow("Auto Break Lasso", characterList, playerState, "autoBreakFreeEnabled", setAutoBreakFreeEnabled)
+    createBoundToggleRow("Auto Get Up", characterList, playerState, "autoGetUpEnabled", setAutoGetUpEnabled)
+    createBoundToggleRow("Infinite Oxygen", characterList, playerState, "infiniteOxygenEnabled", setInfiniteOxygenEnabled)
+    createBoundToggleRow("Disable Water Logic", characterList, playerState, "disableWaterLogicEnabled", setDisableWaterLogicEnabled)
+    createBoundToggleRow("Equip while swimming", characterList, playerState, "equipWhileSwimmingEnabled", setEquipWhileSwimmingEnabled)
+
+    local horseList, horseHeaderLabel = createCollapsibleSection("Horse", elementsList)
+    horseHeaderLabel.RichText = true
+    horseHeaderLabel.Text = '<font color="#d9d9d9">Horse</font>'
+    createBoundToggleRow("Infinite Stamina", horseList, playerState, "horseInfiniteStaminaEnabled", setHorseInfiniteStaminaEnabled)
 
     local playerRowsInitialized = false
     local function syncPlayerRows()
