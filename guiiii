@@ -19,6 +19,7 @@ local _Players = game:GetService("Players")
 local _UserInputService = game:GetService("UserInputService")
 local _SoundService = game:GetService("SoundService")
 local _HttpService = game:GetService("HttpService")
+local _CollectionService = game:GetService("CollectionService")
 automineStartupDebug("services resolved")
 
 function resolveAutomineLocalPlayer(timeoutSeconds)
@@ -260,6 +261,7 @@ local DEFAULTS = {
     noJumpCooldownEnabled = false,
     noFallDamageEnabled = false,
     noDamageSelfEnabled = false,
+    noCactusDamageEnabled = false,
     noRagdollEnabled = false,
     autoBreakFreeEnabled = false,
     autoGetUpEnabled = false,
@@ -1101,8 +1103,9 @@ local function serializeState()
         infiniteStaminaEnabled = S.infiniteStaminaEnabled,
         safeTeleportEnabled = S.safeTeleportEnabled,
         noJumpCooldownEnabled = S.noJumpCooldownEnabled,
-        noFallDamageEnabled = S.noFallDamageEnabled,
+        noFallDamageEnabled = false,
         noDamageSelfEnabled = S.noDamageSelfEnabled,
+        noCactusDamageEnabled = S.noCactusDamageEnabled,
         noRagdollEnabled = S.noRagdollEnabled,
         autoBreakFreeEnabled = S.autoBreakFreeEnabled,
         autoGetUpEnabled = S.autoGetUpEnabled,
@@ -1243,10 +1246,16 @@ function applySerializedState(data)
         S.noJumpCooldownEnabled = data.noJumpCooldownEnabled
     end
     if type(data.noFallDamageEnabled) == "boolean" then
-        S.noFallDamageEnabled = data.noFallDamageEnabled
+        if data.noFallDamageEnabled == true and data.noDamageSelfEnabled == nil then
+            S.noDamageSelfEnabled = true
+        end
+        S.noFallDamageEnabled = false
     end
     if type(data.noDamageSelfEnabled) == "boolean" then
         S.noDamageSelfEnabled = data.noDamageSelfEnabled
+    end
+    if type(data.noCactusDamageEnabled) == "boolean" then
+        S.noCactusDamageEnabled = data.noCactusDamageEnabled
     end
     if type(data.noRagdollEnabled) == "boolean" then
         S.noRagdollEnabled = data.noRagdollEnabled
@@ -6639,6 +6648,7 @@ playerState = {
 	noJumpCooldownEnabled = S.noJumpCooldownEnabled,
 	noFallDamageEnabled = S.noFallDamageEnabled,
 	noDamageSelfEnabled = S.noDamageSelfEnabled,
+	noCactusDamageEnabled = S.noCactusDamageEnabled,
 	noRagdollEnabled = S.noRagdollEnabled,
 	autoBreakFreeEnabled = S.autoBreakFreeEnabled,
 	autoGetUpEnabled = S.autoGetUpEnabled,
@@ -6677,6 +6687,11 @@ playerState = {
 	swimCanSwitchWrapper = nil,
 	originalSwimUpdate = nil,
 	swimUpdateWrapper = nil,
+	cactusTouchDisabledInstances = {},
+	cactusDescendantConnections = {},
+	cactusFoliageAddedConnection = nil,
+	cactusFoliageRemovedConnection = nil,
+	lastCactusDamageScanAt = 0,
 }
 playerEspState = {
     renderConnection = nil,
@@ -6749,8 +6764,9 @@ function applyStoredStateToRuntime()
         playerState.infiniteStaminaEnabled = S.infiniteStaminaEnabled == true
         playerState.safeTeleportEnabled = S.safeTeleportEnabled == true
         playerState.noJumpCooldownEnabled = S.noJumpCooldownEnabled == true
-        playerState.noFallDamageEnabled = S.noFallDamageEnabled == true
+        playerState.noFallDamageEnabled = false
         playerState.noDamageSelfEnabled = S.noDamageSelfEnabled == true
+        playerState.noCactusDamageEnabled = S.noCactusDamageEnabled == true
         playerState.noRagdollEnabled = S.noRagdollEnabled == true
         playerState.autoBreakFreeEnabled = S.autoBreakFreeEnabled == true
         playerState.autoGetUpEnabled = S.autoGetUpEnabled == true
@@ -24472,6 +24488,163 @@ playerState.safeTeleportBlockedFlags = {
 	CharacterReplicate = true,
 }
 
+function isCactusNamedInstance(instance)
+	if typeof(instance) ~= "Instance" then
+		return false
+	end
+
+	local current = instance
+	local depth = 0
+	while current and current ~= workspace and depth < 8 do
+		local loweredName = string.lower(tostring(current.Name or ""))
+		if string.find(loweredName, "cactus", 1, true)
+			or string.find(loweredName, "saguaro", 1, true)
+			or string.find(loweredName, "sanpedro", 1, true) then
+			return true
+		end
+		current = current.Parent
+		depth = depth + 1
+	end
+
+	return false
+end
+
+function disableCactusTouchPart(part)
+	if typeof(part) ~= "Instance" or not part:IsA("BasePart") then
+		return
+	end
+
+	local disabled = playerState.cactusTouchDisabledInstances
+	if type(disabled) ~= "table" then
+		disabled = {}
+		playerState.cactusTouchDisabledInstances = disabled
+	end
+
+	if not disabled[part] then
+		disabled[part] = {
+			CanTouch = part.CanTouch,
+			CanCollide = part.CanCollide,
+		}
+	end
+
+	pcall(function()
+		part.CanTouch = false
+	end)
+	pcall(function()
+		part.CanCollide = false
+	end)
+end
+
+function applyNoCactusDamageToInstance(instance)
+	if not playerState.noCactusDamageEnabled or not isCactusNamedInstance(instance) then
+		return
+	end
+
+	if instance:IsA("BasePart") then
+		disableCactusTouchPart(instance)
+	end
+
+	for _, descendant in ipairs(instance:GetDescendants()) do
+		if descendant:IsA("BasePart") then
+			disableCactusTouchPart(descendant)
+		end
+	end
+
+	local connections = playerState.cactusDescendantConnections
+	if type(connections) ~= "table" then
+		connections = {}
+		playerState.cactusDescendantConnections = connections
+	end
+
+	if not connections[instance] then
+		connections[instance] = instance.DescendantAdded:Connect(function(descendant)
+			if playerState.noCactusDamageEnabled and descendant:IsA("BasePart") then
+				disableCactusTouchPart(descendant)
+			end
+		end)
+	end
+end
+
+function restoreNoCactusDamageHooks()
+	if playerState.cactusFoliageAddedConnection then
+		playerState.cactusFoliageAddedConnection:Disconnect()
+	end
+	if playerState.cactusFoliageRemovedConnection then
+		playerState.cactusFoliageRemovedConnection:Disconnect()
+	end
+	playerState.cactusFoliageAddedConnection = nil
+	playerState.cactusFoliageRemovedConnection = nil
+
+	if type(playerState.cactusDescendantConnections) == "table" then
+		for _, connection in pairs(playerState.cactusDescendantConnections) do
+			pcall(function()
+				connection:Disconnect()
+			end)
+		end
+	end
+	playerState.cactusDescendantConnections = {}
+
+	if type(playerState.cactusTouchDisabledInstances) == "table" then
+		for part, state in pairs(playerState.cactusTouchDisabledInstances) do
+			if typeof(part) == "Instance" and part:IsA("BasePart") and part.Parent then
+				pcall(function()
+					part.CanTouch = state.CanTouch
+				end)
+				pcall(function()
+					part.CanCollide = state.CanCollide
+				end)
+			end
+		end
+	end
+	playerState.cactusTouchDisabledInstances = {}
+	playerState.lastCactusDamageScanAt = 0
+end
+
+function ensureNoCactusDamageHooks()
+	if not playerState.noCactusDamageEnabled then
+		return
+	end
+
+	if _CollectionService and not playerState.cactusFoliageAddedConnection then
+		playerState.cactusFoliageAddedConnection = _CollectionService:GetInstanceAddedSignal("InteractableFoliage"):Connect(function(instance)
+			applyNoCactusDamageToInstance(instance)
+		end)
+		playerState.cactusFoliageRemovedConnection = _CollectionService:GetInstanceRemovedSignal("InteractableFoliage"):Connect(function(instance)
+			local connection = playerState.cactusDescendantConnections and playerState.cactusDescendantConnections[instance]
+			if connection then
+				pcall(function()
+					connection:Disconnect()
+				end)
+				playerState.cactusDescendantConnections[instance] = nil
+			end
+		end)
+	end
+
+	local now = os.clock()
+	if now - (playerState.lastCactusDamageScanAt or 0) < 1 then
+		return
+	end
+	playerState.lastCactusDamageScanAt = now
+
+	if _CollectionService then
+		local okTagged, tagged = pcall(function()
+			return _CollectionService:GetTagged("InteractableFoliage")
+		end)
+		if okTagged and type(tagged) == "table" then
+			for _, instance in ipairs(tagged) do
+				applyNoCactusDamageToInstance(instance)
+			end
+			return
+		end
+	end
+
+	for _, instance in ipairs(workspace:GetDescendants()) do
+		if isCactusNamedInstance(instance) and (instance:IsA("Model") or instance:IsA("BasePart")) then
+			applyNoCactusDamageToInstance(instance)
+		end
+	end
+end
+
 function hasPlayerStateNetworkHookEnabled()
 	return playerState.infiniteStaminaEnabled
         or playerState.safeTeleportEnabled
@@ -24485,6 +24658,7 @@ end
 function hasPlayerStateFeatureHooksEnabled()
 	return hasPlayerStateNetworkHookEnabled()
 		or playerState.noJumpCooldownEnabled
+		or playerState.noCactusDamageEnabled
 		or playerState.noRagdollEnabled
 		or playerState.autoBreakFreeEnabled
 		or playerState.autoGetUpEnabled
@@ -25034,6 +25208,12 @@ function ensurePlayerFeatureHooks()
         restoreNoJumpCooldownHooks()
     end
 
+	if playerState.noCactusDamageEnabled then
+		ensureNoCactusDamageHooks()
+	else
+		restoreNoCactusDamageHooks()
+	end
+
     if playerState.autoBreakFreeEnabled then
         ensureAutoBreakFreeHooks()
     else
@@ -25059,6 +25239,9 @@ function ensurePlayerFeatureHooks()
                 if playerState.noJumpCooldownEnabled then
                     ensureNoJumpCooldownHooks()
                 end
+				if playerState.noCactusDamageEnabled then
+					ensureNoCactusDamageHooks()
+				end
                 if playerState.autoBreakFreeEnabled then
                     ensureAutoBreakFreeHooks()
                 end
@@ -25069,6 +25252,7 @@ function ensurePlayerFeatureHooks()
 			end
 			restorePlayerStateNetworkHook()
             restoreNoJumpCooldownHooks()
+			restoreNoCactusDamageHooks()
             restoreAutoBreakFreeHooks()
             restoreGunFeatureHooks()
 			playerState.hookRefreshActive = false
@@ -27752,6 +27936,10 @@ end
 
 function setNoDamageSelfEnabled(isEnabled)
 	return setPlayerFeatureFlag("noDamageSelfEnabled", isEnabled, "no damageself")
+end
+
+function setNoCactusDamageEnabled(isEnabled)
+	return setPlayerFeatureFlag("noCactusDamageEnabled", isEnabled, "no cactus damage")
 end
 
 function setNoRagdollEnabled(isEnabled)
@@ -34015,8 +34203,8 @@ function __westwareBuildPlayerTab()
     playerUi.infiniteStaminaSync = infiniteStaminaSync
 
     createBoundToggleRow("Infinite Jump", elementsList, playerState, "noJumpCooldownEnabled", setNoJumpCooldownEnabled)
-    createBoundToggleRow("No Fall Damage", elementsList, playerState, "noFallDamageEnabled", setNoFallDamageEnabled)
     createBoundToggleRow("No Damageself", elementsList, playerState, "noDamageSelfEnabled", setNoDamageSelfEnabled)
+    createBoundToggleRow("No Cactus Damage", elementsList, playerState, "noCactusDamageEnabled", setNoCactusDamageEnabled)
     createBoundToggleRow("No Ragdoll", elementsList, playerState, "noRagdollEnabled", setNoRagdollEnabled)
     createBoundToggleRow("Auto Break Lasso", elementsList, playerState, "autoBreakFreeEnabled", setAutoBreakFreeEnabled)
     createBoundToggleRow("Auto Get Up", elementsList, playerState, "autoGetUpEnabled", setAutoGetUpEnabled)
