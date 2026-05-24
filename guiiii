@@ -259,6 +259,7 @@ local DEFAULTS = {
     infiniteStaminaEnabled = false,
     safeTeleportEnabled = false,
     noJumpCooldownEnabled = false,
+    noRollCooldownEnabled = false,
     noFallDamageEnabled = false,
     noDamageSelfEnabled = false,
     noCactusDamageEnabled = false,
@@ -1103,6 +1104,7 @@ local function serializeState()
         infiniteStaminaEnabled = S.infiniteStaminaEnabled,
         safeTeleportEnabled = S.safeTeleportEnabled,
         noJumpCooldownEnabled = S.noJumpCooldownEnabled,
+        noRollCooldownEnabled = S.noRollCooldownEnabled,
         noFallDamageEnabled = false,
         noDamageSelfEnabled = S.noDamageSelfEnabled,
         noCactusDamageEnabled = S.noCactusDamageEnabled,
@@ -1244,6 +1246,9 @@ function applySerializedState(data)
     end
     if type(data.noJumpCooldownEnabled) == "boolean" then
         S.noJumpCooldownEnabled = data.noJumpCooldownEnabled
+    end
+    if type(data.noRollCooldownEnabled) == "boolean" then
+        S.noRollCooldownEnabled = data.noRollCooldownEnabled
     end
     if type(data.noFallDamageEnabled) == "boolean" then
         if data.noFallDamageEnabled == true and data.noDamageSelfEnabled == nil then
@@ -6646,6 +6651,7 @@ playerState = {
 	infiniteStaminaEnabled = S.infiniteStaminaEnabled,
 	safeTeleportEnabled = S.safeTeleportEnabled,
 	noJumpCooldownEnabled = S.noJumpCooldownEnabled,
+	noRollCooldownEnabled = S.noRollCooldownEnabled,
 	noFallDamageEnabled = S.noFallDamageEnabled,
 	noDamageSelfEnabled = S.noDamageSelfEnabled,
 	noCactusDamageEnabled = S.noCactusDamageEnabled,
@@ -6661,6 +6667,11 @@ playerState = {
 	hookRefreshActive = false,
 	jumpHookHumanoid = nil,
 	jumpHookConnections = {},
+	noRollCooldownOwner = nil,
+	originalNoRollCooldownRoll = nil,
+	noRollCooldownRollWrapper = nil,
+	originalNoRollCooldownStopRoll = nil,
+	noRollCooldownStopRollWrapper = nil,
 	breakFreeOwner = nil,
 	breakFreeHook = nil,
 	autoBreakFreeConnection = nil,
@@ -6764,6 +6775,7 @@ function applyStoredStateToRuntime()
         playerState.infiniteStaminaEnabled = S.infiniteStaminaEnabled == true
         playerState.safeTeleportEnabled = S.safeTeleportEnabled == true
         playerState.noJumpCooldownEnabled = S.noJumpCooldownEnabled == true
+        playerState.noRollCooldownEnabled = S.noRollCooldownEnabled == true
         playerState.noFallDamageEnabled = false
         playerState.noDamageSelfEnabled = S.noDamageSelfEnabled == true
         playerState.noCactusDamageEnabled = S.noCactusDamageEnabled == true
@@ -24658,6 +24670,7 @@ end
 function hasPlayerStateFeatureHooksEnabled()
 	return hasPlayerStateNetworkHookEnabled()
 		or playerState.noJumpCooldownEnabled
+		or playerState.noRollCooldownEnabled
 		or playerState.noCactusDamageEnabled
 		or playerState.noRagdollEnabled
 		or playerState.autoBreakFreeEnabled
@@ -24959,6 +24972,100 @@ function ensureNoJumpCooldownHooks()
     end
 end
 
+function clearNoRollCooldownState(playerCharacter)
+	if not isTable(playerCharacter) or playerCharacter.RollDirection ~= nil then
+		return
+	end
+
+	pcall(function()
+		rawset(playerCharacter, "RollDebounce", false)
+	end)
+	pcall(function()
+		rawset(playerCharacter, "RollTrack", nil)
+	end)
+	pcall(function()
+		rawset(playerCharacter, "RollPhase", nil)
+	end)
+	pcall(function()
+		rawset(playerCharacter, "RollTrackStopping", nil)
+	end)
+end
+
+function restoreNoRollCooldownHooks()
+	local owner = playerState.noRollCooldownOwner
+	if isTable(owner) then
+		if playerState.originalNoRollCooldownRoll and owner.Roll == playerState.noRollCooldownRollWrapper then
+			owner.Roll = playerState.originalNoRollCooldownRoll
+		end
+		if playerState.originalNoRollCooldownStopRoll and owner.StopRoll == playerState.noRollCooldownStopRollWrapper then
+			owner.StopRoll = playerState.originalNoRollCooldownStopRoll
+		end
+	end
+
+	playerState.noRollCooldownOwner = nil
+	playerState.originalNoRollCooldownRoll = nil
+	playerState.noRollCooldownRollWrapper = nil
+	playerState.originalNoRollCooldownStopRoll = nil
+	playerState.noRollCooldownStopRollWrapper = nil
+end
+
+function ensureNoRollCooldownHooks()
+	if not playerState.noRollCooldownEnabled then
+		return
+	end
+
+	local playerCharacter = resolvePlayerCharacterModule(false) or resolvePlayerCharacterModule(true)
+	if not isTable(playerCharacter) then
+		restoreNoRollCooldownHooks()
+		return
+	end
+
+	local rollFn = rawget(playerCharacter, "Roll") or playerCharacter.Roll
+	local stopRollFn = rawget(playerCharacter, "StopRoll") or playerCharacter.StopRoll
+	if type(rollFn) ~= "function" and type(stopRollFn) ~= "function" then
+		restoreNoRollCooldownHooks()
+		return
+	end
+
+	local needsInstall = playerState.noRollCooldownOwner ~= playerCharacter
+		or (type(rollFn) == "function" and playerCharacter.Roll ~= playerState.noRollCooldownRollWrapper)
+		or (type(stopRollFn) == "function" and playerCharacter.StopRoll ~= playerState.noRollCooldownStopRollWrapper)
+	if needsInstall then
+		restoreNoRollCooldownHooks()
+		playerState.noRollCooldownOwner = playerCharacter
+
+		if type(rollFn) == "function" then
+			playerState.originalNoRollCooldownRoll = rollFn
+			playerState.noRollCooldownRollWrapper = function(self, ...)
+				if playerState.noRollCooldownEnabled then
+					clearNoRollCooldownState(self)
+				end
+
+				local results = table.pack(playerState.originalNoRollCooldownRoll(self, ...))
+				return table.unpack(results, 1, results.n)
+			end
+			playerCharacter.Roll = playerState.noRollCooldownRollWrapper
+		end
+
+		if type(stopRollFn) == "function" then
+			playerState.originalNoRollCooldownStopRoll = stopRollFn
+			playerState.noRollCooldownStopRollWrapper = function(self, ...)
+				if playerState.noRollCooldownEnabled and isTable(self) then
+					rawset(self, "RollDirection", nil)
+					clearNoRollCooldownState(self)
+					return nil
+				end
+
+				local results = table.pack(playerState.originalNoRollCooldownStopRoll(self, ...))
+				return table.unpack(results, 1, results.n)
+			end
+			playerCharacter.StopRoll = playerState.noRollCooldownStopRollWrapper
+		end
+	end
+
+	clearNoRollCooldownState(playerCharacter)
+end
+
 function restoreAutoBreakFreeHooks()
     if playerState.autoBreakFreeConnection then
         pcall(function()
@@ -25208,6 +25315,12 @@ function ensurePlayerFeatureHooks()
         restoreNoJumpCooldownHooks()
     end
 
+	if playerState.noRollCooldownEnabled then
+		ensureNoRollCooldownHooks()
+	else
+		restoreNoRollCooldownHooks()
+	end
+
 	if playerState.noCactusDamageEnabled then
 		ensureNoCactusDamageHooks()
 	else
@@ -25239,6 +25352,9 @@ function ensurePlayerFeatureHooks()
                 if playerState.noJumpCooldownEnabled then
                     ensureNoJumpCooldownHooks()
                 end
+				if playerState.noRollCooldownEnabled then
+					ensureNoRollCooldownHooks()
+				end
 				if playerState.noCactusDamageEnabled then
 					ensureNoCactusDamageHooks()
 				end
@@ -25252,6 +25368,7 @@ function ensurePlayerFeatureHooks()
 			end
 			restorePlayerStateNetworkHook()
             restoreNoJumpCooldownHooks()
+			restoreNoRollCooldownHooks()
 			restoreNoCactusDamageHooks()
             restoreAutoBreakFreeHooks()
             restoreGunFeatureHooks()
@@ -27928,6 +28045,10 @@ end
 
 function setNoJumpCooldownEnabled(isEnabled)
 	return setPlayerFeatureFlag("noJumpCooldownEnabled", isEnabled, "no jump cooldown")
+end
+
+function setNoRollCooldownEnabled(isEnabled)
+	return setPlayerFeatureFlag("noRollCooldownEnabled", isEnabled, "no roll cooldown")
 end
 
 function setNoFallDamageEnabled(isEnabled)
@@ -34203,6 +34324,7 @@ function __westwareBuildPlayerTab()
     playerUi.infiniteStaminaSync = infiniteStaminaSync
 
     createBoundToggleRow("Infinite Jump", elementsList, playerState, "noJumpCooldownEnabled", setNoJumpCooldownEnabled)
+    createBoundToggleRow("No Roll Cooldown", elementsList, playerState, "noRollCooldownEnabled", setNoRollCooldownEnabled)
     createBoundToggleRow("No Damageself", elementsList, playerState, "noDamageSelfEnabled", setNoDamageSelfEnabled)
     createBoundToggleRow("No Cactus Damage", elementsList, playerState, "noCactusDamageEnabled", setNoCactusDamageEnabled)
     createBoundToggleRow("No Ragdoll", elementsList, playerState, "noRagdollEnabled", setNoRagdollEnabled)
