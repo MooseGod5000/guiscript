@@ -21536,7 +21536,11 @@ resolveGlobalNetwork = function(forceRefresh)
 end
 
 function getAutoMineGlobalModule(forceRefresh)
-	local globalModule = getAutoMineGlobalModule(forceRefresh)
+	local globalModule = rawget(_G, "__AutoMineGlobalModule")
+	if not isTable(globalModule) then
+		resolveGlobalNetwork(forceRefresh)
+		globalModule = rawget(_G, "__AutoMineGlobalModule")
+	end
 	return isTable(globalModule) and globalModule or nil
 end
 
