@@ -286,6 +286,7 @@ local DEFAULTS = {
     fastReloadEnabled = false,
     noBulletLossEnabled = false,
     instantLassoChargeEnabled = false,
+    lassoFastChargePercent = 10,
     lassoSilentAimEnabled = false,
     lassoSnaplineEnabled = false,
     lassoNoRopeLimitEnabled = false,
@@ -1121,6 +1122,7 @@ local function serializeState()
         fastReloadEnabled = S.fastReloadEnabled,
         noBulletLossEnabled = S.noBulletLossEnabled,
         instantLassoChargeEnabled = S.instantLassoChargeEnabled,
+        lassoFastChargePercent = S.lassoFastChargePercent,
         lassoSilentAimEnabled = S.lassoSilentAimEnabled,
         lassoSnaplineEnabled = S.lassoSnaplineEnabled,
         lassoNoRopeLimitEnabled = S.lassoNoRopeLimitEnabled,
@@ -1305,6 +1307,9 @@ function applySerializedState(data)
     end
     if type(data.instantLassoChargeEnabled) == "boolean" then
         S.instantLassoChargeEnabled = data.instantLassoChargeEnabled
+    end
+    if type(data.lassoFastChargePercent) == "number" then
+        S.lassoFastChargePercent = math.clamp(math.floor(data.lassoFastChargePercent + 0.5), 1, 100)
     end
     if type(data.lassoSilentAimEnabled) == "boolean" then
         S.lassoSilentAimEnabled = data.lassoSilentAimEnabled
@@ -6662,8 +6667,7 @@ playerEspState = {
 LASSO_SILENT_AIM_MAX_DISTANCE = 200
 LASSO_FAST_THROW_MULTIPLIER = 3.5
 LASSO_FAST_HIT_CONFIRM_DELAY = 0.12
-LASSO_FAST_CHARGE_MIN_TIME = 0.8
-LASSO_FAST_CHARGE_RATIO = 0.9
+LASSO_FAST_CHARGE_MIN_TIME = 0.05
 WALL_BANG_PENETRATION = 100000
 FAST_PROJECTILE_MAX_TRAVEL_TIME = 9.75
 FAST_PROJECTILE_TRACK_BUFFER = 1
@@ -6749,6 +6753,7 @@ function applyStoredStateToRuntime()
         S.gunFovShape = "Circle"
     end
     S.instantLassoChargeEnabled = S.instantLassoChargeEnabled == true
+    S.lassoFastChargePercent = math.clamp(math.floor((tonumber(S.lassoFastChargePercent) or DEFAULTS.lassoFastChargePercent) + 0.5), 1, 100)
     S.lassoSilentAimEnabled = S.lassoSilentAimEnabled == true
     S.lassoSnaplineEnabled = S.lassoSnaplineEnabled == true
     S.lassoNoRopeLimitEnabled = S.lassoNoRopeLimitEnabled == true
@@ -14794,9 +14799,14 @@ function getOriginalLassoChargeTime(sharedData)
     return liveChargeTime
 end
 
+function getLassoFastChargePercent()
+    return math.clamp(math.floor((tonumber(S.lassoFastChargePercent) or DEFAULTS.lassoFastChargePercent) + 0.5), 1, 100)
+end
+
 function getFastLassoChargeTime(sharedData)
     local originalChargeTime = tonumber(getOriginalLassoChargeTime(sharedData)) or 1
-    return math.clamp(originalChargeTime * LASSO_FAST_CHARGE_RATIO, LASSO_FAST_CHARGE_MIN_TIME, originalChargeTime)
+    local speedMultiplier = 1 + (getLassoFastChargePercent() / 100)
+    return math.clamp(originalChargeTime / speedMultiplier, LASSO_FAST_CHARGE_MIN_TIME, originalChargeTime)
 end
 
 function ensureInstantLassoChargeHooks()
@@ -27434,7 +27444,24 @@ function setNoBulletLossEnabled(isEnabled)
 end
 
 function setInstantLassoChargeEnabled(isEnabled)
-    return setSFeatureFlag("instantLassoChargeEnabled", isEnabled, "lasso instant charge")
+    return setSFeatureFlag("instantLassoChargeEnabled", isEnabled, "lasso fast charge")
+end
+
+function setLassoFastChargePercent(value)
+    local nextValue = math.clamp(math.floor((tonumber(value) or DEFAULTS.lassoFastChargePercent) + 0.5), 1, 100)
+    if S.lassoFastChargePercent == nextValue then
+        return false, nextValue
+    end
+
+    S.lassoFastChargePercent = nextValue
+    schedulePersist()
+
+    if S.instantLassoChargeEnabled then
+        restoreInstantLassoChargeHooks()
+        ensureInstantLassoChargeHooks()
+    end
+
+    return true, nextValue
 end
 
 function setLassoSilentAimEnabled(isEnabled)
@@ -33377,15 +33404,24 @@ function initWeaponsLassoSection(elementsList)
 
     createBoundToggleRow("No rope limit", lassoList, S, "lassoNoRopeLimitEnabled", setLassoNoRopeLimitEnabled)
     createBoundToggleRow("Faster lasso", lassoList, S, "fasterLassoEnabled", setFasterLassoEnabled)
-    createBoundToggleRow("Instant charge", lassoList, S, "instantLassoChargeEnabled", setInstantLassoChargeEnabled)
+    local fastChargeRow, _, fastChargeSync = createBoundToggleRow("Fast charge", lassoList, S, "instantLassoChargeEnabled", setInstantLassoChargeEnabled)
+
+    local fastChargePercentRow = createSliderRow("Boost %", lassoList, S.lassoFastChargePercent, function(value)
+        setLassoFastChargePercent(value)
+    end, function()
+        return S.lassoFastChargePercent
+    end, 1, 100)
 
     local lassoRowsInitialized = false
 
     local function syncLassoRows()
         local showSnapline = S.lassoSilentAimEnabled == true
+        local showFastChargeRows = S.instantLassoChargeEnabled == true
         setAnimatedRowVisible(snaplineRow, showSnapline, 38, not lassoRowsInitialized)
+        setAnimatedRowVisible(fastChargePercentRow, showFastChargeRows, 38, not lassoRowsInitialized)
         pcall(silentAimSync)
         pcall(snaplineSync)
+        pcall(fastChargeSync)
         lassoRowsInitialized = true
     end
 
