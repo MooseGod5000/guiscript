@@ -6660,6 +6660,8 @@ LASSO_FAST_HIT_CONFIRM_DELAY = 0.12
 WALL_BANG_PENETRATION = 100000
 FAST_PROJECTILE_MAX_TRAVEL_TIME = 9.25
 FAST_PROJECTILE_TRACK_BUFFER = 1
+FAST_RELOAD_SPEED_MULTIPLIER = 4
+FAST_RELOAD_MAX_ANIM_SPEED = 7
 gunFeatureState = {
     renderConnection = nil,
     warnedAimUnavailable = false,
@@ -14967,17 +14969,15 @@ function ensureFastReloadHook()
             local packedArgs = table.pack(...)
             local isReloadTrack = S.fastReloadEnabled and isGunReloadTrack(trackName)
             if isReloadTrack and type(packedArgs[packedArgs.n]) == "number" then
-                packedArgs[packedArgs.n] = packedArgs[packedArgs.n] * 10
+                local originalSpeed = packedArgs[packedArgs.n]
+                if originalSpeed > 0 then
+                    packedArgs[packedArgs.n] = math.max(
+                        originalSpeed,
+                        math.min(originalSpeed * FAST_RELOAD_SPEED_MULTIPLIER, FAST_RELOAD_MAX_ANIM_SPEED)
+                    )
+                end
             end
-            local result = hook.originalPlayTrack(self, trackName, table.unpack(packedArgs, 1, packedArgs.n))
-            if isReloadTrack and tostring(trackName) == "LoadStart" then
-                task.spawn(function()
-                    pcall(function()
-                        self:StopTrack(trackName, 0.05)
-                    end)
-                end)
-            end
-            return result
+            return hook.originalPlayTrack(self, trackName, table.unpack(packedArgs, 1, packedArgs.n))
         end
         gunItem.PlayTrack = hook.wrapper
     end
