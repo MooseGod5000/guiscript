@@ -14002,23 +14002,195 @@ function getGunAimCursorPosition()
     return Vector2.new(camera.ViewportSize.X * 0.5, camera.ViewportSize.Y * 0.5)
 end
 
-function getSilentAimTargetPart(character)
-    if not character then
+function getSilentAimObjectField(object, key)
+    if not isTable(object) then
         return nil
     end
 
-    local preferTorso = tostring(S.silentAimBodyTarget or "Head") == "Torso"
-    if preferTorso then
-        return character:FindFirstChild("UpperTorso")
-            or character:FindFirstChild("Torso")
-            or character:FindFirstChild("HumanoidRootPart")
-            or getRootPart(character)
+    local value = rawget(object, key)
+    if value ~= nil then
+        return value
     end
 
-    return character:FindFirstChild("Head")
-        or character:FindFirstChild("UpperTorso")
-        or character:FindFirstChild("Torso")
-        or getRootPart(character)
+    local ok, result = pcall(function()
+        return object[key]
+    end)
+    return ok and result or nil
+end
+
+function getSilentAimNumericValue(value)
+    if type(value) == "number" then
+        return value
+    end
+
+    if typeof(value) == "Instance" then
+        local ok, instanceValue = pcall(function()
+            return value.Value
+        end)
+        if ok and type(instanceValue) == "number" then
+            return instanceValue
+        end
+    end
+
+    return tonumber(value)
+end
+
+function getSilentAimAttribute(sourceObject, attributeName)
+    if typeof(sourceObject) == "Instance" then
+        local ok, value = pcall(function()
+            return sourceObject:GetAttribute(attributeName)
+        end)
+        if ok and value ~= nil then
+            return value
+        end
+    end
+
+    local attributes = getSilentAimObjectField(sourceObject, "Attributes")
+    if isTable(attributes) then
+        local value = getSilentAimObjectField(attributes, attributeName)
+        if value ~= nil then
+            return value
+        end
+        local getAttribute = getSilentAimObjectField(attributes, "GetAttribute")
+        if type(getAttribute) == "function" then
+            local ok, result = pcall(getAttribute, attributes, attributeName)
+            if ok then
+                return result
+            end
+        end
+    elseif typeof(attributes) == "Instance" then
+        local ok, value = pcall(function()
+            return attributes:GetAttribute(attributeName)
+        end)
+        if ok then
+            return value
+        end
+    end
+
+    return getSilentAimObjectField(sourceObject, attributeName)
+end
+
+function resolveSilentAimTargetContainer(container, sourceObject)
+    local candidates = {
+        container,
+        getSilentAimObjectField(sourceObject, "Character"),
+        getSilentAimObjectField(sourceObject, "character"),
+        getSilentAimObjectField(sourceObject, "Model"),
+        getSilentAimObjectField(sourceObject, "model"),
+        getSilentAimObjectField(sourceObject, "Rig"),
+        getSilentAimObjectField(sourceObject, "obj"),
+        getSilentAimObjectField(sourceObject, "RootPart"),
+        getSilentAimObjectField(sourceObject, "ApplyRootCFramePart"),
+        getSilentAimObjectField(sourceObject, "hrp"),
+        getSilentAimObjectField(sourceObject, "Body"),
+    }
+
+    for _, candidate in ipairs(candidates) do
+        if typeof(candidate) == "Instance" then
+            if candidate:IsA("Model") or candidate:IsA("Folder") then
+                return candidate
+            end
+            if candidate:IsA("BasePart") then
+                return candidate.Parent
+            end
+        end
+    end
+
+    return nil
+end
+
+function getSilentAimPartOrder(kind)
+    local preferTorso = tostring(S.silentAimBodyTarget or "Head") == "Torso"
+    if kind == "Entities" then
+        if preferTorso then
+            return {"Body", "RealBody", "UpperTorso", "Torso", "HumanoidRootPart", "Head"}
+        end
+        return {"Head", "Body", "RealBody", "UpperTorso", "Torso", "HumanoidRootPart"}
+    end
+
+    if kind == "NPCs" then
+        if preferTorso then
+            return {"UpperTorso", "Torso", "Body", "RootPart", "HumanoidRootPart", "Head"}
+        end
+        return {"Head", "UpperTorso", "Torso", "Body", "RootPart", "HumanoidRootPart"}
+    end
+
+    if preferTorso then
+        return {"UpperTorso", "Torso", "HumanoidRootPart", "Head"}
+    end
+    return {"Head", "UpperTorso", "Torso", "HumanoidRootPart"}
+end
+
+function findSilentAimNamedBasePart(container, partNames)
+    if typeof(container) ~= "Instance" then
+        return nil
+    end
+
+    for _, partName in ipairs(partNames) do
+        local part = container:FindFirstChild(partName)
+        if part and part:IsA("BasePart") then
+            return part
+        end
+    end
+
+    for _, partName in ipairs(partNames) do
+        local part = container:FindFirstChild(partName, true)
+        if part and part:IsA("BasePart") then
+            return part
+        end
+    end
+
+    return nil
+end
+
+function getSilentAimMappedPart(sourceObject, partNames)
+    local characterMap = getSilentAimObjectField(sourceObject, "CharacterMap")
+    if isTable(characterMap) then
+        for _, partName in ipairs(partNames) do
+            local mappedPart = getSilentAimObjectField(characterMap, partName)
+            if typeof(mappedPart) == "Instance" and mappedPart:IsA("BasePart") then
+                return mappedPart
+            end
+        end
+    end
+
+    for _, fieldName in ipairs({"Head", "Body", "RealBody", "RootPart", "ApplyRootCFramePart", "hrp"}) do
+        local part = getSilentAimObjectField(sourceObject, fieldName)
+        if typeof(part) == "Instance" and part:IsA("BasePart") then
+            return part
+        end
+    end
+
+    return nil
+end
+
+function getSilentAimTargetPart(character, kind, sourceObject)
+    local container = resolveSilentAimTargetContainer(character, sourceObject)
+    if not container then
+        return nil
+    end
+
+    local partNames = getSilentAimPartOrder(kind)
+    local mappedPart = getSilentAimMappedPart(sourceObject, partNames)
+    if mappedPart then
+        return mappedPart
+    end
+
+    local namedPart = findSilentAimNamedBasePart(container, partNames)
+    if namedPart then
+        return namedPart
+    end
+
+    if container:IsA("Model") then
+        local ok, primaryPart = pcall(function()
+            return container.PrimaryPart
+        end)
+        if ok and primaryPart and primaryPart:IsA("BasePart") then
+            return primaryPart
+        end
+    end
+
+    return container:FindFirstChildWhichIsA("BasePart", true)
 end
 
 function getSilentAimPriorityOrder()
@@ -14034,25 +14206,58 @@ function getSilentAimPriorityOrder()
     return enabledOrder
 end
 
-function isSilentAimModelAlive(model)
-    if not model or not model:IsA("Model") then
+function isSilentAimModelAlive(model, sourceObject)
+    local container = resolveSilentAimTargetContainer(model, sourceObject)
+    if typeof(container) ~= "Instance" then
         return false
     end
 
-    local humanoid = getCharacterHumanoid(model)
+    local entitiesFolder = workspace:FindFirstChild("WORKSPACE_Entities")
+    local deadAnimalsFolder = entitiesFolder and entitiesFolder:FindFirstChild("DeadAnimals")
+    if deadAnimalsFolder and container:IsDescendantOf(deadAnimalsFolder) then
+        return false
+    end
+
+    local isDead = getSilentAimObjectField(sourceObject, "IsDead")
+    if type(isDead) == "function" then
+        local ok, result = pcall(isDead, sourceObject)
+        if ok and result == true then
+            return false
+        end
+    end
+
+    local hidden = getSilentAimAttribute(sourceObject, "Hidden")
+    if hidden == true then
+        return false
+    end
+
+    local health = getSilentAimNumericValue(getSilentAimAttribute(sourceObject, "Health"))
+        or getSilentAimNumericValue(getSilentAimObjectField(sourceObject, "Health"))
+    if health and health <= 0 then
+        return false
+    end
+
+    local healthValue = container:FindFirstChild("Health")
+    local containerHealth = getSilentAimNumericValue(healthValue)
+    if containerHealth and containerHealth <= 0 then
+        return false
+    end
+
+    local humanoid = getCharacterHumanoid(container)
     if humanoid then
         return humanoid.Health > 0
     end
 
-    return getSilentAimTargetPart(model) ~= nil
+    return getSilentAimTargetPart(container, nil, sourceObject) ~= nil
 end
 
-function buildSilentAimTargetInfo(kind, model, player)
-    if not isSilentAimModelAlive(model) then
+function buildSilentAimTargetInfo(kind, model, player, sourceObject)
+    local container = resolveSilentAimTargetContainer(model, sourceObject)
+    if not isSilentAimModelAlive(container, sourceObject) then
         return nil
     end
 
-    local targetPart = getSilentAimTargetPart(model)
+    local targetPart = getSilentAimTargetPart(container, kind, sourceObject)
     if not targetPart then
         return nil
     end
@@ -14060,10 +14265,86 @@ function buildSilentAimTargetInfo(kind, model, player)
     return {
         kind = kind,
         player = player,
-        character = model,
+        character = container,
+        sourceObject = sourceObject,
         part = targetPart,
         position = targetPart.Position,
     }
+end
+
+function resolveSilentAimClientNPCs(forceRefresh)
+    local globalModule = getAutoMineGlobalModule(forceRefresh)
+    if not isTable(globalModule) then
+        return nil
+    end
+
+    local clientNPCs = rawget(globalModule, "ClientNPCs") or globalModule.ClientNPCs
+    if isTable(clientNPCs) then
+        return clientNPCs
+    end
+
+    if type(globalModule.LoadModule) == "function" then
+        for _, moduleName in ipairs({"ClientNPCs", "NPCs"}) do
+            local okLoad, loadedModule = pcall(function()
+                return globalModule:LoadModule(moduleName)
+            end)
+            if okLoad and isTable(loadedModule) then
+                globalModule.ClientNPCs = loadedModule
+                return loadedModule
+            end
+        end
+    end
+
+    return nil
+end
+
+function resolveSilentAimWildLife(forceRefresh)
+    local globalModule = getAutoMineGlobalModule(forceRefresh)
+    if not isTable(globalModule) then
+        return nil
+    end
+
+    local wildLife = rawget(globalModule, "WildLife") or globalModule.WildLife
+    if isTable(wildLife) then
+        return wildLife
+    end
+
+    if type(globalModule.LoadModule) == "function" then
+        local okLoad, loadedWildLife = pcall(function()
+            return globalModule:LoadModule("WildLife")
+        end)
+        if okLoad and isTable(loadedWildLife) then
+            globalModule.WildLife = loadedWildLife
+            return loadedWildLife
+        end
+    end
+
+    return nil
+end
+
+function appendSilentAimTarget(group, seenTargets, kind, model, player, sourceObject)
+    local candidate = buildSilentAimTargetInfo(kind, model, player, sourceObject)
+    if not candidate then
+        return
+    end
+
+    if (candidate.sourceObject and seenTargets[candidate.sourceObject])
+        or (candidate.character and seenTargets[candidate.character])
+        or (candidate.part and seenTargets[candidate.part]) then
+        return
+    end
+
+    if candidate.sourceObject then
+        seenTargets[candidate.sourceObject] = true
+    end
+    if candidate.character then
+        seenTargets[candidate.character] = true
+    end
+    if candidate.part then
+        seenTargets[candidate.part] = true
+    end
+
+    table.insert(group, candidate)
 end
 
 function getSilentAimTargetsByPriority()
@@ -14072,13 +14353,32 @@ function getSilentAimTargetsByPriority()
         NPCs = {},
         Entities = {},
     }
+    local seenTargets = {}
 
     for _, player in ipairs(_Players:GetPlayers()) do
         if player ~= localPlayer then
             local _, character = getAliveTwwTargetData(player)
-            local candidate = buildSilentAimTargetInfo("Players", character, player)
-            if candidate then
-                table.insert(groupedTargets.Players, candidate)
+            appendSilentAimTarget(groupedTargets.Players, seenTargets, "Players", character, player, nil)
+        end
+    end
+
+    local clientNPCs = resolveSilentAimClientNPCs(false) or resolveSilentAimClientNPCs(true)
+    if isTable(clientNPCs) then
+        local npcMap = rawget(clientNPCs, "NPC_Map") or clientNPCs.NPC_Map
+        if isTable(npcMap) then
+            for _, npcObject in pairs(npcMap) do
+                if isTable(npcObject) then
+                    appendSilentAimTarget(groupedTargets.NPCs, seenTargets, "NPCs", nil, nil, npcObject)
+                end
+            end
+        end
+
+        local npcList = rawget(clientNPCs, "NPCs") or clientNPCs.NPCs
+        if isTable(npcList) then
+            for _, npcObject in pairs(npcList) do
+                if isTable(npcObject) then
+                    appendSilentAimTarget(groupedTargets.NPCs, seenTargets, "NPCs", nil, nil, npcObject)
+                end
             end
         end
     end
@@ -14087,9 +14387,19 @@ function getSilentAimTargetsByPriority()
     local npcsFolder = entitiesFolder and entitiesFolder:FindFirstChild("NPCs")
     if npcsFolder then
         for _, model in ipairs(npcsFolder:GetChildren()) do
-            local candidate = buildSilentAimTargetInfo("NPCs", model, nil)
-            if candidate then
-                table.insert(groupedTargets.NPCs, candidate)
+            appendSilentAimTarget(groupedTargets.NPCs, seenTargets, "NPCs", model, nil, nil)
+        end
+    end
+
+    local wildLife = resolveSilentAimWildLife(false) or resolveSilentAimWildLife(true)
+    if isTable(wildLife) then
+        local getWildLife = rawget(wildLife, "GetWildLife") or wildLife.GetWildLife
+        if type(getWildLife) == "function" then
+            local okWildLife, wildLifeObjects = pcall(getWildLife, wildLife)
+            if okWildLife and isTable(wildLifeObjects) then
+                for animalModel, animalObject in pairs(wildLifeObjects) do
+                    appendSilentAimTarget(groupedTargets.Entities, seenTargets, "Entities", animalModel, nil, animalObject)
+                end
             end
         end
     end
@@ -14097,10 +14407,7 @@ function getSilentAimTargetsByPriority()
     local animalsFolder = entitiesFolder and entitiesFolder:FindFirstChild("Animals")
     if animalsFolder then
         for _, model in ipairs(animalsFolder:GetChildren()) do
-            local candidate = buildSilentAimTargetInfo("Entities", model, nil)
-            if candidate then
-                table.insert(groupedTargets.Entities, candidate)
-            end
+            appendSilentAimTarget(groupedTargets.Entities, seenTargets, "Entities", model, nil, nil)
         end
     end
 
@@ -14143,6 +14450,15 @@ function isSilentAimLineOfSightClear(targetPart, targetCharacter)
     return targetCharacter and result.Instance and result.Instance:IsDescendantOf(targetCharacter)
 end
 
+function getSilentAimPriorityRank(priorityName)
+    for index, name in ipairs(getSilentAimPriorityOrder()) do
+        if name == priorityName then
+            return index
+        end
+    end
+    return #GUN_TARGET_PRIORITY_ORDER + 1
+end
+
 function getSilentAimTargetInfo()
     local camera = workspace.CurrentCamera
     if not camera then
@@ -14154,10 +14470,12 @@ function getSilentAimTargetInfo()
     local fovRadius = math.clamp(tonumber(S.gunFovRadius) or 200, 10, 2000)
     local useFovMode = tostring(S.silentAimMode or "FOV") == "FOV"
     local groupedTargets = getSilentAimTargetsByPriority()
+    local bestTarget = nil
+    local bestScore = nil
+    local bestPriorityRank = math.huge
 
     for _, priorityName in ipairs(getSilentAimPriorityOrder()) do
-        local bestTarget = nil
-        local bestScore = nil
+        local priorityRank = getSilentAimPriorityRank(priorityName)
         for _, candidate in ipairs(groupedTargets[priorityName] or {}) do
             local targetPart = candidate.part
             local targetCharacter = candidate.character
@@ -14169,24 +14487,25 @@ function getSilentAimTargetInfo()
                     local screenDistance = (screenVector - cursorPosition).Magnitude
                     if (not useFovMode) or screenDistance <= fovRadius then
                         local candidateScore = useFovMode and screenDistance or worldDistance
-                        if not bestTarget or not bestScore or candidateScore < bestScore then
+                        if not bestTarget
+                            or not bestScore
+                            or candidateScore < (bestScore - 0.001)
+                            or (math.abs(candidateScore - bestScore) <= 0.001 and priorityRank < bestPriorityRank) then
                             candidate.screenPosition = screenVector
                             candidate.screenDistance = screenDistance
                             candidate.worldDistance = worldDistance
                             candidate.position = targetPart.Position
                             bestTarget = candidate
                             bestScore = candidateScore
+                            bestPriorityRank = priorityRank
                         end
                     end
                 end
             end
         end
-        if bestTarget then
-            return bestTarget
-        end
     end
 
-    return nil
+    return bestTarget
 end
 
 function getCurrentGunSharedData(forceRefresh)
@@ -15762,6 +16081,17 @@ function getGunFovPolygonSides(shapeName)
     return 0
 end
 
+function getGunSnaplineColor(targetInfo)
+    local kind = targetInfo and targetInfo.kind
+    if kind == "NPCs" then
+        return Color3.fromRGB(190, 90, 255)
+    end
+    if kind == "Entities" then
+        return Color3.fromRGB(255, 145, 35)
+    end
+    return Color3.new(1, 1, 1)
+end
+
 function updateGunAimVisuals()
     if not hasGunAimVisualsEnabled() then
         hideGunAimDrawings()
@@ -15825,7 +16155,7 @@ function updateGunAimVisuals()
     if S.gunSnaplineEnabled and targetInfo and gunFeatureState.snapline then
         gunFeatureState.snapline.From = cursor
         gunFeatureState.snapline.To = targetInfo.screenPosition
-        gunFeatureState.snapline.Color = Color3.new(1, 1, 1)
+        gunFeatureState.snapline.Color = getGunSnaplineColor(targetInfo)
         gunFeatureState.snapline.Visible = true
     end
 
