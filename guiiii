@@ -25399,6 +25399,11 @@ HORSE_ORBIT_GROUND_RAY_HEIGHT = 34
 HORSE_ORBIT_GROUND_RAY_DEPTH = 90
 HORSE_ORBIT_MIN_HOVER_HEIGHT = 2.4
 HORSE_ORBIT_MOUNT_RETRY_SECONDS = 0.35
+HORSE_FLING_TARGET_RANGE = 15
+HORSE_FLING_TARGET_DISTANCE = 1
+HORSE_FLING_SPIN_POWER = 20000
+HORSE_FLING_TARGET_SPIN_SPEED = 35
+HORSE_FLING_TARGET_LIFT_POWER = 20000
 
 function isHorseOrbitAnimalCandidate(ridingAnimal)
 	if not isTable(ridingAnimal) or ridingAnimal.Active == false then
@@ -25748,6 +25753,7 @@ end
 
 function setHorseOrbitHorseCollisionEnabled(ridingAnimal, isEnabled)
 	local character = isTable(ridingAnimal) and (rawget(ridingAnimal, "character") or ridingAnimal.character) or nil
+	local horseRoot = getHorseOrbitRoot(ridingAnimal)
 	if isEnabled then
 		local savedParts = playerState.horseOrbitHorseCollisionParts
 		if type(savedParts) == "table" then
@@ -25763,7 +25769,7 @@ function setHorseOrbitHorseCollisionEnabled(ridingAnimal, isEnabled)
 		return true
 	end
 
-	if typeof(character) ~= "Instance" then
+	if typeof(character) ~= "Instance" and not horseRoot then
 		return false
 	end
 
@@ -25773,17 +25779,94 @@ function setHorseOrbitHorseCollisionEnabled(ridingAnimal, isEnabled)
 		playerState.horseOrbitHorseCollisionParts = savedParts
 	end
 
-	for _, descendant in ipairs(character:GetDescendants()) do
-		if descendant:IsA("BasePart") then
-			if savedParts[descendant] == nil then
-				savedParts[descendant] = descendant.CanCollide
+	local function disablePartCollision(part)
+		if typeof(part) == "Instance" and part:IsA("BasePart") then
+			if savedParts[part] == nil then
+				savedParts[part] = part.CanCollide
 			end
 			pcall(function()
-				descendant.CanCollide = false
+				part.CanCollide = false
 			end)
 		end
 	end
+
+	if typeof(character) == "Instance" then
+		for _, descendant in ipairs(character:GetDescendants()) do
+			disablePartCollision(descendant)
+		end
+	end
+	disablePartCollision(horseRoot)
 	return true
+end
+
+function isHorseFlingLocalCharacter(character)
+	if typeof(character) ~= "Instance" or not localPlayer then
+		return false
+	end
+
+	if character == getWorldCharacterForPlayer(localPlayer) or character == localPlayer.Character then
+		return true
+	end
+
+	local name = tostring(character.Name or "")
+	return name == localPlayer.Name or name == tostring(localPlayer.UserId)
+end
+
+function getHorseFlingRootFromCharacter(character)
+	if typeof(character) ~= "Instance" or not character:IsA("Model") or isHorseFlingLocalCharacter(character) then
+		return nil
+	end
+
+	local humanoid = getCharacterHumanoid(character)
+	if humanoid and humanoid.Health <= 0 then
+		return nil
+	end
+
+	return character:FindFirstChild("HumanoidRootPart") or character.PrimaryPart or getRootPart(character)
+end
+
+function findHorseFlingTargetRoot(originRoot)
+	if not originRoot then
+		return nil
+	end
+
+	local range = tonumber(HORSE_FLING_TARGET_RANGE) or 15
+	local bestRoot = nil
+	local bestDistance = range
+	local seenCharacters = {}
+
+	local function considerCharacter(character)
+		if typeof(character) ~= "Instance" or seenCharacters[character] then
+			return
+		end
+		seenCharacters[character] = true
+
+		local targetRoot = getHorseFlingRootFromCharacter(character)
+		if not targetRoot then
+			return
+		end
+
+		local distance = (originRoot.Position - targetRoot.Position).Magnitude
+		if distance <= bestDistance then
+			bestDistance = distance
+			bestRoot = targetRoot
+		end
+	end
+
+	local playersFolder = getTwwEntityPlayersFolder()
+	if playersFolder then
+		for _, character in ipairs(playersFolder:GetChildren()) do
+			considerCharacter(character)
+		end
+	end
+
+	for _, player in ipairs(_Players:GetPlayers()) do
+		if player ~= localPlayer then
+			considerCharacter(getWorldCharacterForPlayer(player) or player.Character)
+		end
+	end
+
+	return bestRoot, bestDistance
 end
 
 function detachHorseOrbitSeat(rootPart)
@@ -25933,20 +26016,36 @@ function applyHorseOrbitAnimalMotion(ridingAnimal, character, rootPart, dt)
 	end
 
 	local dtSeconds = math.clamp(tonumber(dt) or (1 / 60), 1 / 240, 1 / 15)
-	local angle = ((tonumber(playerState.horseOrbitAngle) or 0) + HORSE_ORBIT_ANGULAR_SPEED * dtSeconds) % (math.pi * 2)
-	playerState.horseOrbitAngle = angle
+	local flingTargetRoot = findHorseFlingTargetRoot(rootPart)
+	local hasFlingTarget = flingTargetRoot ~= nil
+	local lookDirection
+	local targetCFrame
+	if hasFlingTarget then
+		local direction = flingTargetRoot.Position - horseRoot.Position
+		lookDirection = Vector3.new(direction.X, 0, direction.Z)
+		if lookDirection.Magnitude <= 0.001 then
+			lookDirection = Vector3.new(0, 0, -1)
+		end
+		lookDirection = lookDirection.Unit
+		targetCFrame = CFrame.new(flingTargetRoot.Position)
+			* CFrame.new(0, 0, HORSE_FLING_TARGET_DISTANCE)
+			* CFrame.Angles(0, os.clock() * HORSE_FLING_TARGET_SPIN_SPEED, 0)
+	else
+		local angle = ((tonumber(playerState.horseOrbitAngle) or 0) + HORSE_ORBIT_ANGULAR_SPEED * dtSeconds) % (math.pi * 2)
+		playerState.horseOrbitAngle = angle
 
-	local offset = Vector3.new(math.cos(angle) * HORSE_ORBIT_RADIUS, 0, math.sin(angle) * HORSE_ORBIT_RADIUS)
-	local lookDirection = rootPart.Position - (rootPart.Position + offset)
-	lookDirection = Vector3.new(lookDirection.X, 0, lookDirection.Z)
-	if lookDirection.Magnitude <= 0.001 then
-		lookDirection = Vector3.new(0, 0, -1)
+		local offset = Vector3.new(math.cos(angle) * HORSE_ORBIT_RADIUS, 0, math.sin(angle) * HORSE_ORBIT_RADIUS)
+		lookDirection = rootPart.Position - (rootPart.Position + offset)
+		lookDirection = Vector3.new(lookDirection.X, 0, lookDirection.Z)
+		if lookDirection.Magnitude <= 0.001 then
+			lookDirection = Vector3.new(0, 0, -1)
+		end
+		lookDirection = lookDirection.Unit
+
+		local targetPosition = rootPart.Position + offset
+		targetPosition = Vector3.new(targetPosition.X, getHorseOrbitTargetY(targetPosition, ridingAnimal, character, horseRoot), targetPosition.Z)
+		targetCFrame = CFrame.new(targetPosition, targetPosition + lookDirection)
 	end
-	lookDirection = lookDirection.Unit
-
-	local targetPosition = rootPart.Position + offset
-	targetPosition = Vector3.new(targetPosition.X, getHorseOrbitTargetY(targetPosition, ridingAnimal, character, horseRoot), targetPosition.Z)
-	local targetCFrame = CFrame.new(targetPosition, targetPosition + lookDirection)
 
 	pcall(function()
 		ridingAnimal.Movement = nil
@@ -25994,8 +26093,15 @@ function applyHorseOrbitAnimalMotion(ridingAnimal, character, rootPart, dt)
 		horseRoot.Velocity = Vector3.new(0, 0.8, 0)
 	end)
 	pcall(function()
-		horseRoot.AssemblyAngularVelocity = Vector3.new()
+		horseRoot.AssemblyAngularVelocity = hasFlingTarget and Vector3.new(0, HORSE_FLING_SPIN_POWER, 0) or Vector3.new()
 	end)
+	if hasFlingTarget then
+		pcall(function()
+			if (horseRoot.Position - flingTargetRoot.Position).Magnitude <= (HORSE_FLING_TARGET_DISTANCE + 6) then
+				flingTargetRoot.AssemblyLinearVelocity = Vector3.new(0, HORSE_FLING_TARGET_LIFT_POWER, 0)
+			end
+		end)
+	end
 
 	local bodyGyro = rawget(ridingAnimal, "bg") or ridingAnimal.bg
 	if bodyGyro then
@@ -26023,7 +26129,7 @@ function applyHorseOrbitPulse(dt)
 	local ridingAnimal = ensureHorseOrbitMounted()
 	if not ridingAnimal then
 		restoreHorseOrbitPlayerAttachment(false)
-		pushDebugRateLimited("horse_orbit_waiting_for_horse", "horse orbit: waiting for your horse", 4)
+		pushDebugRateLimited("horse_fling_waiting_for_horse", "horse fling: waiting for your horse", 4)
 		return false
 	end
 
@@ -29621,7 +29727,7 @@ function setHorseAntiRagdollEnabled(isEnabled)
 end
 
 function setHorseOrbitEnabled(isEnabled)
-	return setPlayerFeatureFlag("horseOrbitEnabled", isEnabled, "horse orbit")
+	return setPlayerFeatureFlag("horseOrbitEnabled", isEnabled, "horse fling")
 end
 
 function setSpeedChangerValue(value, skipPersistence)
@@ -35943,7 +36049,7 @@ function __westwareBuildPlayerTab()
     createBoundToggleRow("Infinite Stamina", horseList, playerState, "horseInfiniteStaminaEnabled", setHorseInfiniteStaminaEnabled)
     createBoundToggleRow("No water slow", horseList, playerState, "horseNoWaterSlowEnabled", setHorseNoWaterSlowEnabled)
     createBoundToggleRow("Anti ragdoll", horseList, playerState, "horseAntiRagdollEnabled", setHorseAntiRagdollEnabled)
-    createBoundToggleRow("Horse Orbit", horseList, playerState, "horseOrbitEnabled", setHorseOrbitEnabled)
+    createBoundToggleRow("Horse Fling", horseList, playerState, "horseOrbitEnabled", setHorseOrbitEnabled)
 
     local playerRowsInitialized = false
     local function syncPlayerRows()
