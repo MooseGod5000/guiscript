@@ -2084,6 +2084,22 @@ hubWrapper.BorderSizePixel = 0
 hubWrapper.Visible = false
 hubWrapper.Parent = hubGui
 
+local hubTiltGhost = Instance.new("Frame")
+hubTiltGhost.Name = "HubTiltGhost"
+hubTiltGhost.Size = UDim2.new(1, 0, 1, 0)
+hubTiltGhost.Position = UDim2.new(0.5, 0, 0.5, 0)
+hubTiltGhost.AnchorPoint = Vector2.new(0.5, 0.5)
+hubTiltGhost.BackgroundColor3 = Color3.fromRGB(8, 8, 8)
+hubTiltGhost.BackgroundTransparency = 0.45
+hubTiltGhost.BorderSizePixel = 0
+hubTiltGhost.ZIndex = 1
+hubTiltGhost.Parent = hubWrapper
+Instance.new("UICorner", hubTiltGhost).CornerRadius = UDim.new(0, 12)
+local hubTiltGhostStroke = Instance.new("UIStroke", hubTiltGhost)
+hubTiltGhostStroke.Color = Color3.fromRGB(0, 150, 255)
+hubTiltGhostStroke.Transparency = 0.72
+hubTiltGhostStroke.Thickness = 1
+
 local hubMain = Instance.new("CanvasGroup")
 hubMain.Name = "HubMain"
 hubMain.Size = UDim2.new(1, 0, 1, 0)
@@ -2091,6 +2107,7 @@ hubMain.BackgroundColor3 = Color3.fromRGB(18, 18, 18)
 hubMain.BorderSizePixel = 0
 hubMain.ClipsDescendants = true
 hubMain.GroupTransparency = S.guiTransparency / 100
+hubMain.ZIndex = 2
 hubMain.Parent = hubWrapper
 Instance.new("UICorner", hubMain).CornerRadius = UDim.new(0, 12)
 
@@ -2955,6 +2972,17 @@ local function createDraggableDropdown(titleText)
         end
     end
 
+    local dropTiltGhost = Instance.new("Frame")
+    dropTiltGhost.Size = UDim2.new(0, 240, 0, 220)
+    dropTiltGhost.Position = UDim2.new(0.5, -120, 0.5, -110)
+    dropTiltGhost.BackgroundColor3 = Color3.fromRGB(8, 8, 8)
+    dropTiltGhost.BackgroundTransparency = 0.5
+    dropTiltGhost.BorderSizePixel = 1
+    dropTiltGhost.BorderColor3 = Color3.fromRGB(0, 150, 255)
+    dropTiltGhost.ZIndex = 99
+    dropTiltGhost.Parent = dropGui
+    Instance.new("UICorner", dropTiltGhost).CornerRadius = UDim.new(0, 4)
+
     local dropFrame = Instance.new("Frame")
     dropFrame.Size = UDim2.new(0, 240, 0, 220)
     dropFrame.Position = UDim2.new(0.5, -120, 0.5, -110)
@@ -3132,7 +3160,10 @@ local function createDraggableDropdown(titleText)
                 ddTargetRot = 0
             end
             ddCurrentRot = ddCurrentRot + (ddTargetRot - ddCurrentRot) * math.min(dt * 10, 1)
-            dropFrame.Rotation = ddCurrentRot
+            dropFrame.Rotation = 0
+            dropTiltGhost.Size = dropFrame.Size
+            dropTiltGhost.Position = dropFrame.Position
+            dropTiltGhost.Rotation = ddCurrentRot
         end
     end)
 
@@ -14002,22 +14033,61 @@ function getGunAimCursorPosition()
     return Vector2.new(camera.ViewportSize.X * 0.5, camera.ViewportSize.Y * 0.5)
 end
 
-function getSilentAimTargetPart(character)
+function getSilentAimPartByNames(model, names, recursive, rejectRootPart)
+    if not model then
+        return nil
+    end
+    for _, partName in ipairs(names) do
+        local part = model:FindFirstChild(partName, recursive == true)
+        if part and part:IsA("BasePart") and not (rejectRootPart and part.Name == "HumanoidRootPart") then
+            return part
+        end
+    end
+    return nil
+end
+
+function getSilentAimFallbackBasePart(model, rejectRootPart)
+    if not model then
+        return nil
+    end
+
+    local root = getTwwModelRoot(model)
+    if root and root:IsA("BasePart") and not (rejectRootPart and root.Name == "HumanoidRootPart") then
+        return root
+    end
+
+    for _, descendant in ipairs(model:GetDescendants()) do
+        if descendant:IsA("BasePart") and not (rejectRootPart and descendant.Name == "HumanoidRootPart") then
+            return descendant
+        end
+    end
+
+    return nil
+end
+
+function getSilentAimTargetPart(character, targetKind)
     if not character then
         return nil
     end
 
     local preferTorso = tostring(S.silentAimBodyTarget or "Head") == "Torso"
+    local kind = tostring(targetKind or "Players")
+    local rejectRootPart = kind == "NPCs" or kind == "Entities"
+
+    if kind == "NPCs" or kind == "Entities" then
+        local npcAnimalNames = preferTorso
+            and {"Body", "UpperTorso", "Torso", "Head", "LowerTorso"}
+            or {"Head", "Body", "UpperTorso", "Torso", "LowerTorso"}
+        return getSilentAimPartByNames(character, npcAnimalNames, true, true)
+            or getSilentAimFallbackBasePart(character, true)
+    end
+
     if preferTorso then
-        return character:FindFirstChild("UpperTorso")
-            or character:FindFirstChild("Torso")
-            or character:FindFirstChild("HumanoidRootPart")
+        return getSilentAimPartByNames(character, {"UpperTorso", "Torso", "HumanoidRootPart"}, false, rejectRootPart)
             or getRootPart(character)
     end
 
-    return character:FindFirstChild("Head")
-        or character:FindFirstChild("UpperTorso")
-        or character:FindFirstChild("Torso")
+    return getSilentAimPartByNames(character, {"Head", "UpperTorso", "Torso", "HumanoidRootPart"}, false, rejectRootPart)
         or getRootPart(character)
 end
 
@@ -14034,7 +14104,7 @@ function getSilentAimPriorityOrder()
     return enabledOrder
 end
 
-function isSilentAimModelAlive(model)
+function isSilentAimModelAlive(model, targetKind)
     if not model or not model:IsA("Model") then
         return false
     end
@@ -14044,15 +14114,15 @@ function isSilentAimModelAlive(model)
         return humanoid.Health > 0
     end
 
-    return getSilentAimTargetPart(model) ~= nil
+    return getSilentAimTargetPart(model, targetKind) ~= nil
 end
 
 function buildSilentAimTargetInfo(kind, model, player)
-    if not isSilentAimModelAlive(model) then
+    if not isSilentAimModelAlive(model, kind) then
         return nil
     end
 
-    local targetPart = getSilentAimTargetPart(model)
+    local targetPart = getSilentAimTargetPart(model, kind)
     if not targetPart then
         return nil
     end
@@ -15762,6 +15832,17 @@ function getGunFovPolygonSides(shapeName)
     return 0
 end
 
+function getGunTargetSnaplineColor(targetInfo)
+    local kind = tostring(targetInfo and targetInfo.kind or "Players")
+    if kind == "NPCs" then
+        return Color3.fromRGB(190, 120, 255)
+    end
+    if kind == "Entities" then
+        return Color3.fromRGB(255, 150, 45)
+    end
+    return Color3.new(1, 1, 1)
+end
+
 function updateGunAimVisuals()
     if not hasGunAimVisualsEnabled() then
         hideGunAimDrawings()
@@ -15825,7 +15906,7 @@ function updateGunAimVisuals()
     if S.gunSnaplineEnabled and targetInfo and gunFeatureState.snapline then
         gunFeatureState.snapline.From = cursor
         gunFeatureState.snapline.To = targetInfo.screenPosition
-        gunFeatureState.snapline.Color = Color3.new(1, 1, 1)
+        gunFeatureState.snapline.Color = getGunTargetSnaplineColor(targetInfo)
         gunFeatureState.snapline.Visible = true
     end
 
@@ -38043,7 +38124,8 @@ function __westwareConnectHubDragging()
             hubTargetRot = 0
         end
         hubCurrentRot = hubCurrentRot + (hubTargetRot - hubCurrentRot) * math.min(dt * 10, 1)
-        hubWrapper.Rotation = hubCurrentRot
+        hubWrapper.Rotation = 0
+        hubTiltGhost.Rotation = hubCurrentRot
 	end)
 end
 
