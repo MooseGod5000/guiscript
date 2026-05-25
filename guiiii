@@ -7327,6 +7327,7 @@ PLAYER_SPEED_CHANGER_WALKSPEED_CAP = 34
 PLAYER_SPEED_CHANGER_ACCEL = 115
 PLAYER_SPEED_CHANGER_RUBBERBAND_BACKOFF_SECONDS = 1.6
 PLAYER_SPEED_CHANGER_RUBBERBAND_BACKOFF_MULTIPLIER = 0.65
+PLAYER_SPEED_CHANGER_MOVE_SPEED_KEYS = {"Walk", "Sprint", "SprintMelee", "InAir"}
 CFRAME_SPEED_MAX = 300
 CFRAME_FLY_SPEED_MAX = 300
 CFRAME_FLY_OFFSET_MIN = 1
@@ -7696,6 +7697,7 @@ playerState = {
 	speedChangerBackoffUntil = 0,
 	speedChangerBackoffSpeed = nil,
 	speedChangerLastRubberBandAt = 0,
+	speedChangerMoveSpeedOverride = nil,
 	breakFreeOwner = nil,
 	breakFreeHook = nil,
 	autoBreakFreeConnection = nil,
@@ -28041,17 +28043,88 @@ function getSpeedChangerEffectiveSpeed()
 	return math.clamp(targetSpeed, PLAYER_SPEED_CHANGER_MIN, PLAYER_SPEED_CHANGER_MAX)
 end
 
+function resolveSpeedChangerMoveSpeedTable(forceRefresh)
+	local params = nil
+	if type(resolveGlobalParams) == "function" then
+		params = resolveGlobalParams(false)
+		if not isTable(params) and forceRefresh then
+			params = resolveGlobalParams(true)
+		end
+	end
+	if not isTable(params) then
+		return nil
+	end
+
+	local characterParams = rawget(params, "Character") or params.Character
+	if not isTable(characterParams) then
+		return nil
+	end
+
+	local moveSpeed = rawget(characterParams, "MoveSpeed") or characterParams.MoveSpeed
+	return isTable(moveSpeed) and moveSpeed or nil
+end
+
+function restoreSpeedChangerMoveSpeedOverrides()
+	local override = playerState.speedChangerMoveSpeedOverride
+	if not isTable(override) then
+		playerState.speedChangerMoveSpeedOverride = nil
+		return
+	end
+
+	local moveSpeed = rawget(override, "moveSpeed")
+	local values = rawget(override, "values")
+	if isTable(moveSpeed) and isTable(values) then
+		for key, value in pairs(values) do
+			pcall(function()
+				moveSpeed[key] = value
+			end)
+		end
+	end
+	playerState.speedChangerMoveSpeedOverride = nil
+end
+
+function applySpeedChangerMoveSpeedOverrides(targetSpeed)
+	local moveSpeed = resolveSpeedChangerMoveSpeedTable(false) or resolveSpeedChangerMoveSpeedTable(true)
+	if not isTable(moveSpeed) then
+		return false
+	end
+
+	local override = playerState.speedChangerMoveSpeedOverride
+	if not isTable(override) or rawget(override, "moveSpeed") ~= moveSpeed then
+		restoreSpeedChangerMoveSpeedOverrides()
+		local values = {}
+		for _, key in ipairs(PLAYER_SPEED_CHANGER_MOVE_SPEED_KEYS) do
+			values[key] = rawget(moveSpeed, key) or moveSpeed[key]
+		end
+		override = {
+			moveSpeed = moveSpeed,
+			values = values,
+		}
+		playerState.speedChangerMoveSpeedOverride = override
+	end
+
+	local speed = math.clamp(tonumber(targetSpeed) or getSpeedChangerValue(), PLAYER_SPEED_CHANGER_MIN, PLAYER_SPEED_CHANGER_MAX)
+	for _, key in ipairs(PLAYER_SPEED_CHANGER_MOVE_SPEED_KEYS) do
+		pcall(function()
+			moveSpeed[key] = speed
+		end)
+	end
+	return true
+end
+
 function applySpeedChangerPulse(dt)
 	local character = getWorldCharacterForPlayer(localPlayer) or (localPlayer and localPlayer.Character)
 	local humanoid = getCharacterHumanoid(character)
 	local rootPart = getRootPart(character)
 	if not shouldRunSpeedChanger(character, humanoid, rootPart) then
+		restoreSpeedChangerMoveSpeedOverrides()
 		resetSpeedChangerRuntime()
 		return
 	end
 
 	if detectSpeedChangerRubberBand(rootPart) then
 		markSpeedChangerRubberBand()
+		applySpeedChangerMoveSpeedOverrides(getSpeedChangerEffectiveSpeed())
 		return
 	end
 
@@ -28064,30 +28137,10 @@ function applySpeedChangerPulse(dt)
 	flatMoveDirection = flatMoveDirection.Unit
 
 	local targetSpeed = getSpeedChangerEffectiveSpeed()
-	local dtSeconds = math.clamp(tonumber(dt) or (1 / 60), 1 / 240, 1 / 20)
-	local velocity = rootPart.AssemblyLinearVelocity or rootPart.Velocity
-	local verticalVelocity = velocity.Y
-	local currentFlatVelocity = Vector3.new(velocity.X, 0, velocity.Z)
-	local targetFlatVelocity = flatMoveDirection * targetSpeed
-	local maxDelta = PLAYER_SPEED_CHANGER_ACCEL * dtSeconds
-	local deltaVelocity = targetFlatVelocity - currentFlatVelocity
-	local nextFlatVelocity = targetFlatVelocity
-	if deltaVelocity.Magnitude > maxDelta then
-		nextFlatVelocity = currentFlatVelocity + (deltaVelocity.Unit * maxDelta)
+	applySpeedChangerMoveSpeedOverrides(targetSpeed)
+	if humanoid.WalkSpeed < targetSpeed then
+		humanoid.WalkSpeed = targetSpeed
 	end
-
-	local maxWalkSpeed = math.min(targetSpeed, PLAYER_SPEED_CHANGER_WALKSPEED_CAP)
-	if humanoid.WalkSpeed < maxWalkSpeed then
-		humanoid.WalkSpeed = maxWalkSpeed
-	end
-
-	local nextVelocity = Vector3.new(nextFlatVelocity.X, verticalVelocity, nextFlatVelocity.Z)
-	pcall(function()
-		rootPart.AssemblyLinearVelocity = nextVelocity
-	end)
-	pcall(function()
-		rootPart.Velocity = nextVelocity
-	end)
 
 	playerState.speedChangerLastFlatPosition = Vector3.new(rootPart.Position.X, 0, rootPart.Position.Z)
 	playerState.speedChangerLastMoveDirection = flatMoveDirection
@@ -28100,6 +28153,7 @@ function restoreSpeedChangerHooks()
 		end)
 	end
 	playerState.speedChangerConnection = nil
+	restoreSpeedChangerMoveSpeedOverrides()
 	resetSpeedChangerRuntime()
 end
 
