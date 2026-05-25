@@ -4342,6 +4342,83 @@ local function getMolotovSpectateTargetData()
     return character, humanoid, rootPart or getTwwModelRoot(character), focusPart
 end
 
+function S._buildMolotovSpectateIgnoreList(targetCharacter)
+    local ignoreList = {}
+    local entitiesFolder = workspace:FindFirstChild("WORKSPACE_Entities")
+    if entitiesFolder then
+        ignoreList[#ignoreList + 1] = entitiesFolder
+    end
+    local playersFolder = getTwwEntityPlayersFolder()
+    if playersFolder then
+        for _, character in ipairs(playersFolder:GetChildren()) do
+            if character and character ~= targetCharacter then
+                ignoreList[#ignoreList + 1] = character
+            end
+        end
+    end
+    if targetCharacter then
+        ignoreList[#ignoreList + 1] = targetCharacter
+    end
+    local localWorldCharacter = getWorldCharacterForPlayer(localPlayer)
+    if localWorldCharacter and localWorldCharacter ~= targetCharacter then
+        ignoreList[#ignoreList + 1] = localWorldCharacter
+    end
+    return ignoreList
+end
+
+function S._stepMolotovSpectateZoomSpring(dt)
+    local minDistance = 3
+    local maxDistance = 24
+    local goal = math.clamp(tonumber(S._molotovSpectateTargetDistance) or tonumber(S._molotovSpectateDistance) or 8, minDistance, maxDistance)
+    local currentDistance = math.clamp(tonumber(S._molotovSpectateDistance) or goal, minDistance, maxDistance)
+    local currentVelocity = tonumber(S._molotovSpectateZoomVelocity) or 0
+    local stepDt = math.max(tonumber(dt) or 0, 1 / 240)
+    local omega = 4.5 * 2 * math.pi
+    local distanceDelta = goal - currentDistance
+    local omegaDt = omega * stepDt
+    local decay = math.exp(-omegaDt)
+    local nextDistance = goal + (currentVelocity * stepDt - distanceDelta * (omegaDt + 1)) * decay
+    local nextVelocity = ((distanceDelta * omega - currentVelocity) * omegaDt + currentVelocity) * decay
+    if nextDistance < minDistance then
+        nextDistance = minDistance
+        nextVelocity = 0
+    elseif nextDistance > maxDistance then
+        nextDistance = maxDistance
+        nextVelocity = 0
+    end
+    S._molotovSpectateDistance = nextDistance
+    S._molotovSpectateZoomVelocity = nextVelocity
+    return nextDistance
+end
+
+function S._resolveMolotovSpectatePopper(camera, desiredCFrame, focusPosition, targetCharacter)
+    if not (camera and desiredCFrame and typeof(focusPosition) == "Vector3") then
+        return desiredCFrame
+    end
+    local desiredDistance = (desiredCFrame.Position - focusPosition).Magnitude
+    local cutoff = 0
+    pcall(function()
+        camera.CFrame = desiredCFrame
+        camera.Focus = CFrame.new(focusPosition)
+        cutoff = tonumber(camera:GetLargestCutoffDistance(S._buildMolotovSpectateIgnoreList(targetCharacter))) or 0
+    end)
+    if math.abs(desiredDistance - (tonumber(S._molotovSpectateLastZoomLevel) or 0)) > 0.001 then
+        S._molotovSpectateLastPopAmount = 0
+    end
+    local lastPopAmount = tonumber(S._molotovSpectateLastPopAmount) or 0
+    if cutoff < lastPopAmount then
+        cutoff = lastPopAmount
+    end
+    if cutoff > 0 then
+        desiredCFrame = desiredCFrame + desiredCFrame.LookVector * cutoff
+        S._molotovSpectateLastPopAmount = math.max(cutoff - 0.3, 0)
+    else
+        S._molotovSpectateLastPopAmount = 0
+    end
+    S._molotovSpectateLastZoomLevel = desiredDistance
+    return desiredCFrame
+end
+
 local function restoreMolotovSpectateCamera()
     if not S._molotovSpectateCameraActive then
         return
@@ -4350,22 +4427,61 @@ local function restoreMolotovSpectateCamera()
         S._molotovSpectateRenderConnection:Disconnect()
         S._molotovSpectateRenderConnection = nil
     end
-    local camera = workspace.CurrentCamera
-    if camera then
-        local localCharacter = localPlayer and localPlayer.Character
-        local humanoid = localCharacter and localCharacter:FindFirstChildOfClass("Humanoid")
-        local rootPart = type(getRootPart) == "function" and getRootPart(localCharacter) or nil
-        pcall(function()
-            camera.CameraType = S._molotovSpectatePreviousType or Enum.CameraType.Custom
-            camera.CameraSubject = S._molotovSpectatePreviousSubject or humanoid or rootPart or camera.CameraSubject
-            if typeof(S._molotovSpectatePreviousCFrame) == "CFrame" then
-                camera.CFrame = S._molotovSpectatePreviousCFrame
-            end
-        end)
+    if S._molotovSpectateInputConnection then
+        S._molotovSpectateInputConnection:Disconnect()
+        S._molotovSpectateInputConnection = nil
     end
+    if S._molotovSpectateInputBeganConnection then
+        S._molotovSpectateInputBeganConnection:Disconnect()
+        S._molotovSpectateInputBeganConnection = nil
+    end
+    if S._molotovSpectateInputEndedConnection then
+        S._molotovSpectateInputEndedConnection:Disconnect()
+        S._molotovSpectateInputEndedConnection = nil
+    end
+    local camera = workspace.CurrentCamera
+    if not camera then
+        return
+    end
+    local localCharacter = localPlayer and localPlayer.Character
+    local humanoid = localCharacter and localCharacter:FindFirstChildOfClass("Humanoid")
+    local rootPart = getRootPart(localCharacter)
+    pcall(function()
+        if S._molotovSpectatePreDragMouseBehavior ~= nil then
+            _UserInputService.MouseBehavior = S._molotovSpectatePreDragMouseBehavior
+            S._molotovSpectatePreDragMouseBehavior = nil
+        else
+            _UserInputService.MouseBehavior = Enum.MouseBehavior.Default
+        end
+        if S._molotovSpectatePreDragMouseIconEnabled ~= nil then
+            _UserInputService.MouseIconEnabled = S._molotovSpectatePreDragMouseIconEnabled
+            S._molotovSpectatePreDragMouseIconEnabled = nil
+        end
+        if S._molotovSpectatePreviousType then
+            camera.CameraType = S._molotovSpectatePreviousType
+        else
+            camera.CameraType = Enum.CameraType.Custom
+        end
+        if S._molotovSpectatePreviousSubject then
+            camera.CameraSubject = S._molotovSpectatePreviousSubject
+        else
+            local localWorldCharacter = getWorldCharacterForPlayer(localPlayer) or localCharacter
+            local localWorldHumanoid = localWorldCharacter and (localWorldCharacter:FindFirstChild("Humanoid") or localWorldCharacter:FindFirstChildOfClass("Humanoid"))
+            local localWorldRoot = getTwwModelRoot(localWorldCharacter) or rootPart
+            camera.CameraSubject = localWorldHumanoid or humanoid or localWorldRoot or camera.CameraSubject
+        end
+        if typeof(S._molotovSpectatePreviousCFrame) == "CFrame" then
+            camera.CFrame = S._molotovSpectatePreviousCFrame
+        end
+    end)
     S._molotovSpectatePreviousType = nil
     S._molotovSpectatePreviousSubject = nil
     S._molotovSpectatePreviousCFrame = nil
+    S._molotovSpectateLastMousePos = nil
+    S._molotovSpectateRotateHeld = false
+    S._molotovSpectateLastPopAmount = 0
+    S._molotovSpectateLastZoomLevel = nil
+    S._molotovSpectateZoomVelocity = 0
     S._molotovSpectateCameraActive = false
 end
 
@@ -4384,8 +4500,69 @@ local function updateMolotovSpectateCamera()
         S._molotovSpectatePreviousSubject = camera.CameraSubject
         S._molotovSpectatePreviousCFrame = camera.CFrame
     end
+    if not S._molotovSpectateInputBeganConnection then
+        S._molotovSpectateInputBeganConnection = _UserInputService.InputBegan:Connect(function(input, gameProcessed)
+            if destroyed or not isSessionActive() or gameProcessed then
+                return
+            end
+            if not S.molotovSpectateEnabled then
+                return
+            end
+            if input.UserInputType == Enum.UserInputType.MouseButton2 then
+                S._molotovSpectateRotateHeld = true
+                S._molotovSpectateLastMousePos = nil
+                S._molotovSpectatePreDragMouseBehavior = _UserInputService.MouseBehavior
+                S._molotovSpectatePreDragMouseIconEnabled = _UserInputService.MouseIconEnabled
+                pcall(function()
+                    _UserInputService.MouseBehavior = Enum.MouseBehavior.LockCurrentPosition
+                    _UserInputService.MouseIconEnabled = false
+                end)
+            end
+        end)
+    end
+    if not S._molotovSpectateInputEndedConnection then
+        S._molotovSpectateInputEndedConnection = _UserInputService.InputEnded:Connect(function(input)
+            if input.UserInputType == Enum.UserInputType.MouseButton2 then
+                S._molotovSpectateRotateHeld = false
+                S._molotovSpectateLastMousePos = nil
+                pcall(function()
+                    if S._molotovSpectatePreDragMouseBehavior ~= nil then
+                        _UserInputService.MouseBehavior = S._molotovSpectatePreDragMouseBehavior
+                    else
+                        _UserInputService.MouseBehavior = Enum.MouseBehavior.Default
+                    end
+                    if S._molotovSpectatePreDragMouseIconEnabled ~= nil then
+                        _UserInputService.MouseIconEnabled = S._molotovSpectatePreDragMouseIconEnabled
+                    else
+                        _UserInputService.MouseIconEnabled = true
+                    end
+                end)
+                S._molotovSpectatePreDragMouseBehavior = nil
+                S._molotovSpectatePreDragMouseIconEnabled = nil
+            end
+        end)
+    end
+    if not S._molotovSpectateInputConnection then
+        S._molotovSpectateInputConnection = _UserInputService.InputChanged:Connect(function(input, gameProcessed)
+            if destroyed or not isSessionActive() or gameProcessed then
+                return
+            end
+            if not S.molotovSpectateEnabled then
+                return
+            end
+            if input.UserInputType == Enum.UserInputType.MouseWheel then
+                local zoomDelta = tonumber(input.Position.Z) or 0
+                local currentGoal = tonumber(S._molotovSpectateTargetDistance) or tonumber(S._molotovSpectateDistance) or 8
+                S._molotovSpectateTargetDistance = math.clamp(currentGoal - zoomDelta * 1.75, 3, 24)
+            elseif input.UserInputType == Enum.UserInputType.MouseMovement and S._molotovSpectateRotateHeld == true then
+                local delta = input.Delta
+                S._molotovSpectateYaw = (tonumber(S._molotovSpectateYaw) or 0) + delta.X * 0.00375
+                S._molotovSpectatePitch = math.clamp((tonumber(S._molotovSpectatePitch) or math.rad(8)) + delta.Y * 0.00285, math.rad(-65), math.rad(65))
+            end
+        end)
+    end
     if not S._molotovSpectateRenderConnection then
-        S._molotovSpectateRenderConnection = _RunService.RenderStepped:Connect(function()
+        S._molotovSpectateRenderConnection = _RunService.RenderStepped:Connect(function(dt)
             if destroyed or not isSessionActive() then
                 restoreMolotovSpectateCamera()
                 return
@@ -4403,14 +4580,37 @@ local function updateMolotovSpectateCamera()
                 return
             end
             local focusPosition = (liveFocusPart or liveRootPart).Position + Vector3.new(0, 0.35, 0)
-            local lookBack = liveRootPart.CFrame.LookVector
-            if lookBack.Magnitude < 0.001 then
-                lookBack = Vector3.new(0, 0, -1)
+            local distance = tonumber(S._molotovSpectateDistance)
+            local yaw = tonumber(S._molotovSpectateYaw)
+            local pitch = tonumber(S._molotovSpectatePitch)
+            if not distance or not yaw or not pitch then
+                local defaultOffset = (-liveRootPart.CFrame.LookVector * 8) + Vector3.new(0, 2.6, 0)
+                local currentOffset = liveCamera.CFrame.Position - focusPosition
+                if currentOffset.Magnitude < 3 or currentOffset.Magnitude > 30 then
+                    currentOffset = defaultOffset
+                end
+                distance = math.clamp(currentOffset.Magnitude, 3, 24)
+                yaw = math.atan2(currentOffset.Z, currentOffset.X)
+                pitch = math.asin(math.clamp(currentOffset.Y / math.max(distance, 0.001), -1, 1))
+                if not pitch or pitch ~= pitch then
+                    pitch = math.rad(8)
+                end
+                S._molotovSpectateDistance = distance
+                S._molotovSpectateTargetDistance = distance
+                S._molotovSpectateYaw = yaw
+                S._molotovSpectatePitch = pitch
+                S._molotovSpectateZoomVelocity = 0
             end
-            local cameraPosition = focusPosition - (lookBack.Unit * 9) + Vector3.new(0, 3.2, 0)
+            distance = S._stepMolotovSpectateZoomSpring(dt)
+            local orbitOffset = Vector3.new(
+                math.cos(pitch) * math.cos(yaw),
+                math.sin(pitch),
+                math.cos(pitch) * math.sin(yaw)
+            ) * distance
+            local cameraPosition = focusPosition + orbitOffset
             pcall(function()
                 liveCamera.CameraType = Enum.CameraType.Scriptable
-                liveCamera.CFrame = CFrame.lookAt(cameraPosition, focusPosition)
+                liveCamera.CFrame = S._resolveMolotovSpectatePopper(liveCamera, CFrame.lookAt(cameraPosition, focusPosition), focusPosition, liveCharacter)
                 liveCamera.Focus = CFrame.new(focusPosition)
             end)
         end)
@@ -7563,6 +7763,8 @@ FAST_PROJECTILE_MAX_TRAVEL_TIME = 9.75
 FAST_PROJECTILE_TRACK_BUFFER = 1
 FAST_PROJECTILE_FORCED_HIT_MAX_DISTANCE = 550
 FAST_PROJECTILE_FORCED_HIT_MAX_TRAVEL_TIME = 0.75
+FAST_PROJECTILE_REWIND_HIT_DELAY = 0.08
+FAST_PROJECTILE_SERVER_TRUST_SPEED = 12000
 FAST_RELOAD_SPEED_MULTIPLIER = 4
 FAST_RELOAD_MAX_ANIM_SPEED = 7
 gunFeatureState = {
@@ -7577,6 +7779,8 @@ gunFeatureState = {
     snapline = nil,
     lassoSnapline = nil,
     trackedFastProjectileBullets = {},
+    fastProjectileTravelTimes = setmetatable({}, { __mode = "k" }),
+    fastProjectileRewoundEntries = setmetatable({}, { __mode = "k" }),
     hookedCamModule = nil,
     originalCamAddRecoil = nil,
     camAddRecoilWrapper = nil,
@@ -14300,21 +14504,119 @@ function applyNoSpreadToProjectileEntry(projectileEntry, projectileType, sharedD
     return true
 end
 
+function ensureFastProjectileWeakTables()
+    if type(gunFeatureState.fastProjectileTravelTimes) ~= "table" then
+        gunFeatureState.fastProjectileTravelTimes = setmetatable({}, { __mode = "k" })
+    end
+    if type(gunFeatureState.fastProjectileRewoundEntries) ~= "table" then
+        gunFeatureState.fastProjectileRewoundEntries = setmetatable({}, { __mode = "k" })
+    end
+end
+
+function setFastProjectileEntryTravelTime(projectileEntry, travelTime)
+    if not isTable(projectileEntry) then
+        return
+    end
+    ensureFastProjectileWeakTables()
+    local duration = tonumber(travelTime)
+    if duration and duration > 0 then
+        gunFeatureState.fastProjectileTravelTimes[projectileEntry] = math.clamp(duration, 0.01, FAST_PROJECTILE_MAX_TRAVEL_TIME)
+    else
+        gunFeatureState.fastProjectileTravelTimes[projectileEntry] = nil
+    end
+end
+
+function getFastProjectileEntryTravelTime(projectileEntry)
+    if not isTable(projectileEntry) or type(gunFeatureState.fastProjectileTravelTimes) ~= "table" then
+        return nil
+    end
+    local travelTime = tonumber(gunFeatureState.fastProjectileTravelTimes[projectileEntry])
+    if travelTime and travelTime > 0 then
+        return math.clamp(travelTime, 0.01, FAST_PROJECTILE_MAX_TRAVEL_TIME)
+    end
+    return nil
+end
+
+function markFastProjectileEntryRewound(projectileEntry, travelTime, delaySeconds)
+    if not isTable(projectileEntry) then
+        return
+    end
+    ensureFastProjectileWeakTables()
+    gunFeatureState.fastProjectileRewoundEntries[projectileEntry] = {
+        travelTime = math.clamp(tonumber(travelTime) or 0.01, 0.01, FAST_PROJECTILE_MAX_TRAVEL_TIME),
+        delay = math.clamp(tonumber(delaySeconds) or FAST_PROJECTILE_REWIND_HIT_DELAY, 0.03, 0.2),
+    }
+end
+
+function getFastProjectileEntryRewind(projectileEntry)
+    if not isTable(projectileEntry) or type(gunFeatureState.fastProjectileRewoundEntries) ~= "table" then
+        return nil
+    end
+    local rewrite = gunFeatureState.fastProjectileRewoundEntries[projectileEntry]
+    return type(rewrite) == "table" and rewrite or nil
+end
+
+function getFastProjectileEntrySpeed(projectileEntry)
+    if not isTable(projectileEntry) then
+        return nil
+    end
+
+    local speed = tonumber(projectileEntry.projectileSpeed)
+        or tonumber(projectileEntry.speed)
+        or (typeof(projectileEntry.velocity) == "Vector3" and projectileEntry.velocity.Magnitude)
+        or tonumber(projectileEntry.power)
+    if speed and speed > 0 then
+        return speed
+    end
+    return nil
+end
+
+function setFastProjectileEntryStartTime(projectileEntry, startTime)
+    if not isTable(projectileEntry) then
+        return false
+    end
+
+    local syncedStartTime = tonumber(startTime)
+    if not syncedStartTime or syncedStartTime <= 0 then
+        return false
+    end
+
+    local changed = false
+    local hasLowerStart = rawget(projectileEntry, "startTime") ~= nil
+    local hasUpperStart = rawget(projectileEntry, "StartTime") ~= nil
+
+    if hasLowerStart then
+        projectileEntry.startTime = syncedStartTime
+        changed = true
+    end
+    if hasUpperStart or not hasLowerStart then
+        projectileEntry.StartTime = syncedStartTime
+        changed = true
+    end
+
+    return changed
+end
+
 function applyFastProjectileToEntry(projectileEntry, targetInfo)
     if not isTable(projectileEntry) then
         return false
     end
 
+    local changed = false
     local direction = typeof(projectileEntry.direction) == "Vector3" and projectileEntry.direction or nil
     if (not direction or direction.Magnitude <= 0.001) and typeof(projectileEntry.velocity) == "Vector3" and projectileEntry.velocity.Magnitude > 0.001 then
         direction = projectileEntry.velocity.Unit
     end
-    if (not direction or direction.Magnitude <= 0.001) and targetInfo and typeof(targetInfo.position) == "Vector3" then
-        local origin = getProjectileEntryOrigin(projectileEntry)
-        if typeof(origin) == "Vector3" then
-            local toTarget = targetInfo.position - origin
-            if toTarget.Magnitude > 0.001 then
-                direction = toTarget.Unit
+
+    local origin = getProjectileEntryOrigin(projectileEntry)
+    local toTarget = nil
+    if targetInfo and typeof(targetInfo.position) == "Vector3" and typeof(origin) == "Vector3" then
+        toTarget = targetInfo.position - origin
+        if toTarget.Magnitude > 0.001 then
+            direction = toTarget.Unit
+            if typeof(projectileEntry.direction) ~= "Vector3" or (projectileEntry.direction - direction).Magnitude > 0.0001 then
+                projectileEntry.direction = direction
+                changed = true
             end
         end
     end
@@ -14322,11 +14624,43 @@ function applyFastProjectileToEntry(projectileEntry, targetInfo)
     if typeof(direction) == "Vector3" and direction.Magnitude > 0.001 then
         if typeof(projectileEntry.direction) ~= "Vector3" or projectileEntry.direction.Magnitude <= 0.001 then
             projectileEntry.direction = direction.Unit
-            return true
+            changed = true
         end
     end
 
-    return false
+    if toTarget and toTarget.Magnitude > 0.001 and typeof(direction) == "Vector3" and direction.Magnitude > 0.001 then
+        local distance = toTarget.Magnitude
+        local currentSpeed = getFastProjectileEntrySpeed(projectileEntry) or 1000
+        local neededSpeed = distance / math.max(FAST_PROJECTILE_FORCED_HIT_MAX_TRAVEL_TIME, 0.1)
+        local desiredSpeed = math.max(currentSpeed, math.min(neededSpeed, FAST_PROJECTILE_SERVER_TRUST_SPEED))
+        local travelTime = math.clamp(distance / math.max(desiredSpeed, 1), 0.01, FAST_PROJECTILE_MAX_TRAVEL_TIME)
+
+        if typeof(projectileEntry.velocity) == "Vector3" and projectileEntry.velocity.Magnitude > 0.001 then
+            projectileEntry.velocity = direction.Unit * desiredSpeed
+            changed = true
+        end
+        if type(projectileEntry.speed) == "number" then
+            projectileEntry.speed = desiredSpeed
+            changed = true
+        end
+        if type(projectileEntry.projectileSpeed) == "number" then
+            projectileEntry.projectileSpeed = desiredSpeed
+            changed = true
+        end
+
+        setFastProjectileEntryTravelTime(projectileEntry, travelTime)
+        if distance > FAST_PROJECTILE_FORCED_HIT_MAX_DISTANCE or travelTime > FAST_PROJECTILE_FORCED_HIT_MAX_TRAVEL_TIME then
+            local hitDelay = FAST_PROJECTILE_REWIND_HIT_DELAY
+            local startTime = getSyncedNetworkTime() - travelTime + hitDelay
+            local didRewindStart = setFastProjectileEntryStartTime(projectileEntry, startTime)
+            if didRewindStart then
+                changed = true
+                markFastProjectileEntryRewound(projectileEntry, travelTime, hitDelay)
+            end
+        end
+    end
+
+    return changed
 end
 
 function getFastProjectileBulletIdList(bulletIds)
@@ -14455,6 +14789,11 @@ function getFastProjectileTargetFlags(targetInfo)
 end
 
 function estimateFastProjectileTravelTime(projectileEntry, targetInfo)
+    local entryTravelTime = getFastProjectileEntryTravelTime(projectileEntry)
+    if entryTravelTime then
+        return entryTravelTime
+    end
+
     local travelTime = tonumber(gunFeatureState.lastProjectileTravelTime)
     if travelTime and travelTime >= 0 then
         return math.clamp(travelTime, 0.01, FAST_PROJECTILE_MAX_TRAVEL_TIME)
@@ -14497,11 +14836,17 @@ function shouldForceFastProjectileFinalEvent(targetInfo, projectileEntry, travel
     end
 
     local distance = (targetPosition - origin).Magnitude
+    local duration = tonumber(travelTime)
+    local rewindInfo = getFastProjectileEntryRewind(projectileEntry)
+    if rewindInfo then
+        local maxDistance = math.clamp(tonumber(S.silentAimDistanceLimit) or 1000, 10, 20000) + 25
+        return distance <= maxDistance and (not duration or duration <= FAST_PROJECTILE_MAX_TRAVEL_TIME)
+    end
+
     if distance > FAST_PROJECTILE_FORCED_HIT_MAX_DISTANCE then
         return false
     end
 
-    local duration = tonumber(travelTime)
     if duration and duration > FAST_PROJECTILE_FORCED_HIT_MAX_TRAVEL_TIME then
         return false
     end
@@ -14549,8 +14894,12 @@ function scheduleFastProjectileFinalEvent(targetInfo, projectileEntry, bulletIds
     if not shouldForceFastProjectileFinalEvent(targetInfo, projectileEntry, travelTime) then
         return
     end
-    local finalTime = getFastProjectileFinalTime(projectileEntry, travelTime)
-    trackFastProjectileBullets(bulletIdList, travelTime + FAST_PROJECTILE_TRACK_BUFFER)
+    local rewindInfo = getFastProjectileEntryRewind(projectileEntry)
+    local waitTime = travelTime
+    if rewindInfo then
+        waitTime = math.clamp(tonumber(rewindInfo.delay) or FAST_PROJECTILE_REWIND_HIT_DELAY, 0.03, 0.2)
+    end
+    trackFastProjectileBullets(bulletIdList, math.max(waitTime, travelTime) + FAST_PROJECTILE_TRACK_BUFFER)
     local npcResolvedTarget = nil
     if npcTarget then
         npcResolvedTarget = { targetPart.Parent and targetPart.Parent.Parent or targetPart.Parent, targetPart.Name }
@@ -14559,7 +14908,7 @@ function scheduleFastProjectileFinalEvent(targetInfo, projectileEntry, bulletIds
     local targetMaterialName = targetPart.Material.Name
 
     task.spawn(function()
-        task.wait(travelTime)
+        task.wait(waitTime)
 
         local network = playerState.hookedNetwork or resolveGlobalNetwork(false) or resolveGlobalNetwork(true)
         local fireServer = type(playerState.originalNetworkFireServer) == "function" and playerState.originalNetworkFireServer
@@ -14591,6 +14940,7 @@ function scheduleFastProjectileFinalEvent(targetInfo, projectileEntry, bulletIds
         local objectHit = targetCFrame:PointToObjectSpace(hitPosition)
         local frontNormal = targetCFrame:VectorToObjectSpace(Vector3.FromNormalId(Enum.NormalId.Front))
         local directionObject = targetCFrame:VectorToObjectSpace(velocity.Unit)
+        local finalTime = getFastProjectileFinalTime(projectileEntry, travelTime)
         local resolvedTarget = targetReference
         if npcTarget then
             resolvedTarget = npcResolvedTarget
@@ -14603,7 +14953,6 @@ function scheduleFastProjectileFinalEvent(targetInfo, projectileEntry, bulletIds
             task.defer(function()
                 pcall(fireServer, network, "RemoveProjectile", bulletId)
             end)
-            untrackFastProjectileBullet(bulletId)
         end
     end)
 end
