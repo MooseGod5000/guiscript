@@ -256,6 +256,11 @@ local DEFAULTS = {
     dynamiteSpectateEnabled = false,
     dynamiteMarkPlayersEnabled = false,
     dynamiteSelectedPlayer = "No Players",
+    molotovTpEnabled = false,
+    molotovStyle = "Blatant",
+    molotovSpectateEnabled = false,
+    molotovMarkPlayersEnabled = false,
+    molotovSelectedPlayer = "No Players",
     infiniteStaminaEnabled = false,
     safeTeleportEnabled = false,
     noJumpCooldownEnabled = false,
@@ -385,6 +390,7 @@ function automineCreateDefaultState()
     end
     state.keybinds = {
         dynamiteMark = Enum.KeyCode.F,
+        molotovMark = Enum.KeyCode.G,
     }
     return state
 end
@@ -601,6 +607,8 @@ S.pathPlayerAvoiderMethods = clonePathPlayerAvoiderMethods(S.pathPlayerAvoiderMe
 S._rowTweenState = setmetatable({}, {__mode = "k"})
 S._dynamiteMarkedPlayers = {}
 S._dynamiteMarkVisuals = {}
+S._molotovMarkedPlayers = {}
+S._molotovMarkVisuals = {}
 S._staffCache = {}
 S._smartStaffMemoryLoaded = false
 S._smartStaffMemory = {}
@@ -1121,6 +1129,11 @@ local function serializeState()
         dynamiteSpectateEnabled = S.dynamiteSpectateEnabled,
         dynamiteMarkPlayersEnabled = S.dynamiteMarkPlayersEnabled,
         dynamiteSelectedPlayer = S.dynamiteSelectedPlayer,
+        molotovTpEnabled = S.molotovTpEnabled,
+        molotovStyle = S.molotovStyle,
+        molotovSpectateEnabled = S.molotovSpectateEnabled,
+        molotovMarkPlayersEnabled = S.molotovMarkPlayersEnabled,
+        molotovSelectedPlayer = S.molotovSelectedPlayer,
         infiniteStaminaEnabled = S.infiniteStaminaEnabled,
         safeTeleportEnabled = S.safeTeleportEnabled,
         noJumpCooldownEnabled = S.noJumpCooldownEnabled,
@@ -1265,6 +1278,21 @@ function applySerializedState(data)
     end
     if type(data.dynamiteSelectedPlayer) == "string" and data.dynamiteSelectedPlayer ~= "" then
         S.dynamiteSelectedPlayer = data.dynamiteSelectedPlayer
+    end
+    if type(data.molotovTpEnabled) == "boolean" then
+        S.molotovTpEnabled = data.molotovTpEnabled
+    end
+    if type(data.molotovStyle) == "string" and data.molotovStyle ~= "" then
+        S.molotovStyle = data.molotovStyle == "Silent" and "Silent" or "Blatant"
+    end
+    if type(data.molotovSpectateEnabled) == "boolean" then
+        S.molotovSpectateEnabled = data.molotovSpectateEnabled
+    end
+    if type(data.molotovMarkPlayersEnabled) == "boolean" then
+        S.molotovMarkPlayersEnabled = data.molotovMarkPlayersEnabled
+    end
+    if type(data.molotovSelectedPlayer) == "string" and data.molotovSelectedPlayer ~= "" then
+        S.molotovSelectedPlayer = data.molotovSelectedPlayer
     end
     if type(data.infiniteStaminaEnabled) == "boolean" then
         S.infiniteStaminaEnabled = data.infiniteStaminaEnabled
@@ -1570,6 +1598,9 @@ if type(data.tweenMoveSpeed) == "number" then
     end
     if not S.keybinds.dynamiteMark then
         S.keybinds.dynamiteMark = Enum.KeyCode.F
+    end
+    if not S.keybinds.molotovMark then
+        S.keybinds.molotovMark = Enum.KeyCode.G
     end
 
     -- Sync runtime automine variables with S table
@@ -4078,6 +4109,315 @@ function pruneDynamiteMarkedPlayers()
     end
 end
 
+local function getMolotovPlayerOptions()
+    return getDynamitePlayerOptions()
+end
+
+local function ensureValidMolotovSelectedPlayer()
+    local options = getMolotovPlayerOptions()
+    if #options == 0 then
+        S.molotovSelectedPlayer = "No Players"
+        return S.molotovSelectedPlayer
+    end
+    if not table.find(options, S.molotovSelectedPlayer) then
+        S.molotovSelectedPlayer = options[1]
+    end
+    return S.molotovSelectedPlayer
+end
+
+function getMolotovMarkedPlayers()
+    if type(S._molotovMarkedPlayers) ~= "table" then
+        S._molotovMarkedPlayers = {}
+    end
+    return S._molotovMarkedPlayers
+end
+
+function destroyMolotovMarkVisual(playerName)
+    if type(S._molotovMarkVisuals) ~= "table" then
+        S._molotovMarkVisuals = {}
+        return
+    end
+
+    local visuals = S._molotovMarkVisuals[playerName]
+    if not visuals then
+        return
+    end
+
+    for _, instance in pairs(visuals) do
+        if typeof(instance) == "Instance" then
+            pcall(function()
+                instance:Destroy()
+            end)
+        end
+    end
+    S._molotovMarkVisuals[playerName] = nil
+end
+
+function clearAllMolotovMarkedPlayers()
+    for _, playerName in ipairs(getMolotovMarkedPlayers()) do
+        destroyMolotovMarkVisual(playerName)
+    end
+    S._molotovMarkedPlayers = {}
+end
+
+function removeMolotovMarkedPlayer(playerName)
+    local order = getMolotovMarkedPlayers()
+    for index = #order, 1, -1 do
+        if order[index] == playerName then
+            table.remove(order, index)
+        end
+    end
+    destroyMolotovMarkVisual(playerName)
+end
+
+function refreshMolotovMarkVisuals()
+    if type(S._molotovMarkVisuals) ~= "table" then
+        S._molotovMarkVisuals = {}
+    end
+
+    local activeVisuals = {}
+    if not S.molotovMarkPlayersEnabled then
+        for playerName in pairs(S._molotovMarkVisuals) do
+            destroyMolotovMarkVisual(playerName)
+        end
+        return
+    end
+
+    for index, playerName in ipairs(getMolotovMarkedPlayers()) do
+        local player, character, rootPart = getAliveTwwTargetData(playerName)
+        if player and character and rootPart then
+            activeVisuals[player.Name] = true
+            local visuals = S._molotovMarkVisuals[player.Name]
+            if type(visuals) ~= "table" or not visuals.highlight or not visuals.highlight.Parent then
+                visuals = {}
+
+                local highlight = Instance.new("Highlight")
+                highlight.Name = "FobMolotovMark"
+                highlight.FillColor = Color3.fromRGB(255, 126, 30)
+                highlight.FillTransparency = 0.5
+                highlight.OutlineColor = Color3.fromRGB(255, 220, 150)
+                highlight.OutlineTransparency = 0
+                highlight.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+                highlight.Adornee = character
+                highlight.Parent = character
+                visuals.highlight = highlight
+
+                local billboard = Instance.new("BillboardGui")
+                billboard.Name = "FobMolotovMarkBillboard"
+                billboard.AlwaysOnTop = true
+                billboard.MaxDistance = 10000
+                billboard.Size = UDim2.new(0, 40, 0, 28)
+                billboard.StudsOffset = Vector3.new(0, 4.2, 0)
+                billboard.Adornee = rootPart
+                billboard.Parent = character
+                visuals.billboard = billboard
+
+                local label = Instance.new("TextLabel")
+                label.Size = UDim2.new(1, 0, 1, 0)
+                label.BackgroundTransparency = 1
+                label.Font = Enum.Font.GothamBold
+                label.TextScaled = true
+                label.TextStrokeTransparency = 0
+                label.TextColor3 = Color3.fromRGB(255, 140, 45)
+                label.Parent = billboard
+                visuals.label = label
+
+                S._molotovMarkVisuals[player.Name] = visuals
+            end
+
+            if visuals.highlight then
+                visuals.highlight.Adornee = character
+                visuals.highlight.Parent = character
+            end
+            if visuals.billboard then
+                visuals.billboard.Adornee = rootPart
+                visuals.billboard.Parent = character
+            end
+            if visuals.label then
+                visuals.label.Text = tostring(index)
+            end
+        end
+    end
+
+    for playerName in pairs(S._molotovMarkVisuals) do
+        if not activeVisuals[playerName] then
+            destroyMolotovMarkVisual(playerName)
+        end
+    end
+end
+
+function pruneMolotovMarkedPlayers()
+    local order = getMolotovMarkedPlayers()
+    local index = 1
+    local changed = false
+    while index <= #order do
+        local player, character = getAliveTwwTargetData(order[index])
+        if not player or not character then
+            destroyMolotovMarkVisual(order[index])
+            table.remove(order, index)
+            changed = true
+        else
+            index = index + 1
+        end
+    end
+    if changed then
+        schedulePersist()
+        refreshMolotovMarkVisuals()
+    end
+end
+
+function getPriorityMolotovTargetName()
+    if S.molotovMarkPlayersEnabled then
+        pruneMolotovMarkedPlayers()
+        local order = getMolotovMarkedPlayers()
+        if #order > 0 then
+            return order[1]
+        end
+    end
+    return ensureValidMolotovSelectedPlayer()
+end
+
+function toggleHoveredMolotovPlayerMark()
+    if destroyed or not isSessionActive() or not S.molotovMarkPlayersEnabled then
+        return
+    end
+
+    local mouse = localPlayer and localPlayer:GetMouse()
+    local hoveredPlayer = getTwwPlayerFromTarget(mouse and mouse.Target)
+    if not hoveredPlayer or hoveredPlayer == localPlayer then
+        return
+    end
+
+    local livePlayer = getAliveTwwTargetData(hoveredPlayer.Name)
+    if not livePlayer then
+        spawnNotification("That player is not alive right now.", "warning", true)
+        return
+    end
+
+    local order = getMolotovMarkedPlayers()
+    local existingIndex = table.find(order, hoveredPlayer.Name)
+    if existingIndex then
+        table.remove(order, existingIndex)
+        destroyMolotovMarkVisual(hoveredPlayer.Name)
+        refreshMolotovMarkVisuals()
+        spawnNotification("Removed " .. hoveredPlayer.Name .. " from the molotov mark list.", "info", true)
+        return
+    end
+
+    table.insert(order, hoveredPlayer.Name)
+    refreshMolotovMarkVisuals()
+    spawnNotification("Marked " .. hoveredPlayer.Name .. " as molotov target #" .. tostring(#order) .. ".", "success", true)
+end
+
+local function getTwwMolotovTargetData()
+    local targetName = getPriorityMolotovTargetName()
+    local player, character, rootPart = getAliveTwwTargetData(targetName)
+    if player and character and rootPart then
+        return player, character, rootPart
+    end
+    return nil
+end
+
+local function getTwwMolotovTargetCFrame()
+    local _, _, rootPart = getTwwMolotovTargetData()
+    if not rootPart then
+        return nil, false
+    end
+
+    local targetPosition = rootPart.Position + Vector3.new(0, 2.75, 0)
+    local lookDirection = rootPart.CFrame.LookVector
+    if lookDirection.Magnitude < 0.001 then
+        lookDirection = Vector3.new(0, 0, -1)
+    end
+    return CFrame.new(targetPosition, targetPosition + lookDirection.Unit), true
+end
+
+local function getMolotovSpectateTargetData()
+    local _, character, rootPart = getTwwMolotovTargetData()
+    if not character then
+        return nil
+    end
+    local humanoid = character:FindFirstChild("Humanoid") or character:FindFirstChildOfClass("Humanoid")
+    local focusPart = character:FindFirstChild("Head") or character:FindFirstChild("UpperTorso") or rootPart or getTwwModelRoot(character)
+    return character, humanoid, rootPart or getTwwModelRoot(character), focusPart
+end
+
+local function restoreMolotovSpectateCamera()
+    if not S._molotovSpectateCameraActive then
+        return
+    end
+    if S._molotovSpectateRenderConnection then
+        S._molotovSpectateRenderConnection:Disconnect()
+        S._molotovSpectateRenderConnection = nil
+    end
+    local camera = workspace.CurrentCamera
+    if camera then
+        local localCharacter = localPlayer and localPlayer.Character
+        local humanoid = localCharacter and localCharacter:FindFirstChildOfClass("Humanoid")
+        local rootPart = type(getRootPart) == "function" and getRootPart(localCharacter) or nil
+        pcall(function()
+            camera.CameraType = S._molotovSpectatePreviousType or Enum.CameraType.Custom
+            camera.CameraSubject = S._molotovSpectatePreviousSubject or humanoid or rootPart or camera.CameraSubject
+            if typeof(S._molotovSpectatePreviousCFrame) == "CFrame" then
+                camera.CFrame = S._molotovSpectatePreviousCFrame
+            end
+        end)
+    end
+    S._molotovSpectatePreviousType = nil
+    S._molotovSpectatePreviousSubject = nil
+    S._molotovSpectatePreviousCFrame = nil
+    S._molotovSpectateCameraActive = false
+end
+
+local function updateMolotovSpectateCamera()
+    if not S.molotovSpectateEnabled then
+        restoreMolotovSpectateCamera()
+        return
+    end
+    local camera = workspace.CurrentCamera
+    if not camera then
+        restoreMolotovSpectateCamera()
+        return
+    end
+    if not S._molotovSpectateCameraActive then
+        S._molotovSpectatePreviousType = camera.CameraType
+        S._molotovSpectatePreviousSubject = camera.CameraSubject
+        S._molotovSpectatePreviousCFrame = camera.CFrame
+    end
+    if not S._molotovSpectateRenderConnection then
+        S._molotovSpectateRenderConnection = _RunService.RenderStepped:Connect(function()
+            if destroyed or not isSessionActive() then
+                restoreMolotovSpectateCamera()
+                return
+            end
+            if not S.molotovSpectateEnabled then
+                restoreMolotovSpectateCamera()
+                return
+            end
+            local liveCharacter, _, liveRootPart, liveFocusPart = getMolotovSpectateTargetData()
+            if not liveCharacter or not liveRootPart then
+                return
+            end
+            local liveCamera = workspace.CurrentCamera
+            if not liveCamera then
+                return
+            end
+            local focusPosition = (liveFocusPart or liveRootPart).Position + Vector3.new(0, 0.35, 0)
+            local lookBack = liveRootPart.CFrame.LookVector
+            if lookBack.Magnitude < 0.001 then
+                lookBack = Vector3.new(0, 0, -1)
+            end
+            local cameraPosition = focusPosition - (lookBack.Unit * 9) + Vector3.new(0, 3.2, 0)
+            pcall(function()
+                liveCamera.CameraType = Enum.CameraType.Scriptable
+                liveCamera.CFrame = CFrame.lookAt(cameraPosition, focusPosition)
+                liveCamera.Focus = CFrame.new(focusPosition)
+            end)
+        end)
+    end
+    S._molotovSpectateCameraActive = true
+end
+
 function destroyPathPlayerAvoiderVisual()
     if type(pathState) ~= "table" then
         return
@@ -4900,6 +5240,371 @@ function getWorldCharacterForPlayer(player)
     return (playersFolder and playersFolder:FindFirstChild(player.Name)) or player.Character
 end
 
+local function hasMolotovTextHint(source)
+    if not isTable(source) then
+        return false
+    end
+
+    for _, key in ipairs({
+        "Type",
+        "Name",
+        "DisplayName",
+        "ItemType",
+        "Model",
+        "ModelName",
+        "EquipmentType",
+    }) do
+        if string.find(safeLower(rawget(source, key) or source[key]), "molotov", 1, true) ~= nil then
+            return true
+        end
+    end
+
+    return false
+end
+
+function isMolotovItemTool(toolInfo)
+    if not isTable(toolInfo) then
+        return false
+    end
+
+    if rawget(toolInfo, "IsMolotov") == true or toolInfo.IsMolotov == true then
+        return true
+    end
+
+    local isOfType = rawget(toolInfo, "IsOfType") or toolInfo.IsOfType
+    if type(isOfType) == "function" then
+        local okMatch, matches = pcall(function()
+            return toolInfo:IsOfType("Molotov")
+        end)
+        if okMatch and matches == true then
+            return true
+        end
+    end
+
+    local sharedData = rawget(toolInfo, "SharedData") or toolInfo.SharedData
+    if hasMolotovTextHint(sharedData) then
+        return true
+    end
+
+    local itemData = type(getResolvedItemData) == "function" and getResolvedItemData(toolInfo) or nil
+    if isTable(itemData) then
+        local itemSharedData = rawget(itemData, "SharedData") or itemData.SharedData
+        if hasMolotovTextHint(itemData) or hasMolotovTextHint(itemSharedData) then
+            return true
+        end
+    end
+
+    return hasMolotovTextHint(toolInfo)
+end
+
+function getCurrentEquippedMolotovItem(forceRefresh)
+    if type(resolvePlayerCharacterModule) ~= "function" or type(hasGetEquippedItem) ~= "function" then
+        return nil
+    end
+
+    local playerCharacter = resolvePlayerCharacterModule(forceRefresh)
+    if not hasGetEquippedItem(playerCharacter) then
+        return nil
+    end
+
+    local okEquipped, equippedItem = pcall(function()
+        return playerCharacter:GetEquippedItem()
+    end)
+    if okEquipped and isMolotovItemTool(equippedItem) then
+        return equippedItem
+    end
+
+    return nil
+end
+
+local function resolveMolotovUtils(forceRefresh)
+    local globalModule = type(getAutoMineGlobalModule) == "function" and getAutoMineGlobalModule(forceRefresh) or nil
+    if not isTable(globalModule) then
+        globalModule = rawget(_G, "__AutoMineGlobalModule")
+    end
+    if not isTable(globalModule) then
+        return nil
+    end
+
+    local utils = rawget(globalModule, "Utils") or globalModule.Utils
+    if not isTable(utils) and type(globalModule.LoadModule) == "function" then
+        local okLoad, loadedUtils = pcall(function()
+            return globalModule:LoadModule("Utils")
+        end)
+        if okLoad and isTable(loadedUtils) then
+            utils = loadedUtils
+            globalModule.Utils = loadedUtils
+        end
+    end
+    if isTable(utils) and type(utils.GetMouseHit) == "function" then
+        return utils
+    end
+    return nil
+end
+
+local function getMolotovProjectileModel(instance)
+    local current = instance
+    while current and current ~= workspace do
+        if current:IsA("Model") and string.find(safeLower(current.Name), "molotov", 1, true) ~= nil then
+            return current
+        end
+        current = current.Parent
+    end
+    return nil
+end
+
+local function isMolotovProjectileModel(model)
+    if not (model and model:IsA("Model") and string.find(safeLower(model.Name), "molotov", 1, true) ~= nil) then
+        return false
+    end
+
+    local root = getTwwModelRoot(model)
+    if not (root and root:IsA("BasePart") and root:IsDescendantOf(workspace)) then
+        return false
+    end
+
+    local ignoreFolder = workspace:FindFirstChild("Ignore")
+    if ignoreFolder and model:IsDescendantOf(ignoreFolder) then
+        return true
+    end
+
+    local okCanCollide, canCollide = pcall(function()
+        return root.CanCollide
+    end)
+    return okCanCollide and canCollide == true
+end
+
+local function applyMolotovTeleportToModel(model, destCFrame)
+    if not (S.molotovTpEnabled and typeof(destCFrame) == "CFrame" and isMolotovProjectileModel(model)) then
+        return false
+    end
+
+    local root = getTwwModelRoot(model)
+    if not root then
+        return false
+    end
+
+    local dropVelocity = tostring(S.molotovStyle or "Blatant") == "Silent"
+        and Vector3.new(0, -95, 0)
+        or Vector3.new(0, -165, 0)
+
+    local ok = pcall(function()
+        model:PivotTo(destCFrame)
+        for _, descendant in ipairs(model:GetDescendants()) do
+            if descendant:IsA("BasePart") then
+                descendant.CanTouch = true
+                descendant.CanQuery = true
+                descendant.AssemblyLinearVelocity = dropVelocity
+                descendant.AssemblyAngularVelocity = Vector3.zero
+            end
+        end
+        root.CanCollide = true
+        root.Velocity = dropVelocity
+        root.AssemblyLinearVelocity = dropVelocity
+        root.AssemblyAngularVelocity = Vector3.zero
+    end)
+
+    return ok == true
+end
+
+function applyMolotovTeleportPulse(forceFullScan)
+    if not S.molotovTpEnabled then
+        return false
+    end
+
+    local destCFrame, targetFound = getTwwMolotovTargetCFrame()
+    if not (targetFound and destCFrame) then
+        return false
+    end
+
+    local moved = false
+    local seen = {}
+
+    local function tryCandidate(instance)
+        local model = getMolotovProjectileModel(instance)
+        if model and not seen[model] then
+            seen[model] = true
+            moved = applyMolotovTeleportToModel(model, destCFrame) or moved
+        end
+    end
+
+    local function scanChildren(container)
+        if not container then
+            return
+        end
+        for _, child in ipairs(container:GetChildren()) do
+            tryCandidate(child)
+        end
+    end
+
+    local function scanDescendants(container)
+        if not container then
+            return
+        end
+        for _, descendant in ipairs(container:GetDescendants()) do
+            tryCandidate(descendant)
+        end
+    end
+
+    local ignoreFolder = workspace:FindFirstChild("Ignore")
+    scanChildren(ignoreFolder)
+
+    local playersFolder = getTwwEntityPlayersFolder()
+    local localModel = playersFolder and playersFolder:FindFirstChild(localPlayer and localPlayer.Name or "")
+    scanDescendants(localModel)
+
+    local now = os.clock()
+    local throwWindowActive = (tonumber(S._molotovThrowTpUntil) or 0) > now
+    local shouldFullScan = forceFullScan
+        or throwWindowActive
+        or (tostring(S.molotovStyle or "Blatant") ~= "Silent" and (now - (tonumber(S._molotovLastFullScanAt) or 0)) >= 0.25)
+    if shouldFullScan then
+        S._molotovLastFullScanAt = now
+        scanDescendants(workspace)
+    end
+
+    return moved
+end
+
+local function noteMolotovThrowWindow()
+    if not S.molotovTpEnabled then
+        return
+    end
+
+    local now = os.clock()
+    S._molotovThrowTpUntil = math.max(tonumber(S._molotovThrowTpUntil) or 0, now + 2.25)
+    if S._molotovThrowPulseActive then
+        return
+    end
+
+    S._molotovThrowPulseActive = true
+    task.spawn(function()
+        while S.molotovTpEnabled and (tonumber(S._molotovThrowTpUntil) or 0) > os.clock() do
+            applyMolotovTeleportPulse(true)
+            task.wait(0.025)
+        end
+        S._molotovThrowPulseActive = false
+    end)
+end
+
+function noteMolotovNetworkFire(remoteName, packedArgs)
+    if not S.molotovTpEnabled or remoteName ~= "ActivateItem" or type(packedArgs) ~= "table" then
+        return
+    end
+    if tostring(packedArgs[2] or "") == "ThrowMolotov" then
+        noteMolotovThrowWindow()
+    end
+end
+
+function restoreMolotovTeleportHooks()
+    local hooks = type(S._molotovTeleportHooks) == "table" and S._molotovTeleportHooks or nil
+    if not hooks then
+        return
+    end
+
+    if hooks.utils and type(hooks.originalGetMouseHit) == "function" and hooks.utils.GetMouseHit == hooks.mouseHitWrapper then
+        hooks.utils.GetMouseHit = hooks.originalGetMouseHit
+    end
+    hooks.utils = nil
+    hooks.originalGetMouseHit = nil
+    hooks.mouseHitWrapper = nil
+
+    local itemHooks = type(hooks.itemHooks) == "table" and hooks.itemHooks or {}
+    for item, hook in pairs(itemHooks) do
+        if isTable(item) and type(hook) == "table" then
+            if type(hook.originalNetworkActivate) == "function" and item.NetworkActivate == hook.networkActivateWrapper then
+                item.NetworkActivate = hook.originalNetworkActivate
+            end
+            if type(hook.originalThrow) == "function" and item.Throw == hook.throwWrapper then
+                item.Throw = hook.originalThrow
+            end
+        end
+    end
+    hooks.itemHooks = setmetatable({}, {__mode = "k"})
+end
+
+function ensureMolotovTeleportHooks()
+    if not S.molotovTpEnabled then
+        restoreMolotovTeleportHooks()
+        return
+    end
+
+    local hooks = S._molotovTeleportHooks
+    if type(hooks) ~= "table" then
+        hooks = {
+            itemHooks = setmetatable({}, {__mode = "k"}),
+        }
+        S._molotovTeleportHooks = hooks
+    elseif type(hooks.itemHooks) ~= "table" then
+        hooks.itemHooks = setmetatable({}, {__mode = "k"})
+    end
+
+    local utils = resolveMolotovUtils(false) or resolveMolotovUtils(true)
+    if utils and utils.GetMouseHit ~= hooks.mouseHitWrapper then
+        if hooks.utils and type(hooks.originalGetMouseHit) == "function" and hooks.utils.GetMouseHit == hooks.mouseHitWrapper then
+            hooks.utils.GetMouseHit = hooks.originalGetMouseHit
+        end
+        hooks.utils = utils
+        hooks.originalGetMouseHit = utils.GetMouseHit
+        local originalGetMouseHit = hooks.originalGetMouseHit
+        hooks.mouseHitWrapper = function(...)
+            if S.molotovTpEnabled and isMolotovItemTool(getCurrentEquippedMolotovItem(false)) then
+                local destCFrame, targetFound = getTwwMolotovTargetCFrame()
+                if targetFound and destCFrame then
+                    return destCFrame.Position, nil
+                end
+            end
+            return originalGetMouseHit(...)
+        end
+        utils.GetMouseHit = hooks.mouseHitWrapper
+    end
+
+    local molotovItem = getCurrentEquippedMolotovItem(false) or getCurrentEquippedMolotovItem(true)
+    if not isTable(molotovItem) then
+        return
+    end
+
+    local itemHook = hooks.itemHooks[molotovItem]
+    if type(itemHook) ~= "table" then
+        itemHook = {}
+        hooks.itemHooks[molotovItem] = itemHook
+    end
+
+    local networkActivate = rawget(molotovItem, "NetworkActivate") or molotovItem.NetworkActivate
+    if type(networkActivate) == "function" and networkActivate ~= itemHook.networkActivateWrapper then
+        itemHook.originalNetworkActivate = networkActivate
+        itemHook.networkActivateWrapper = function(self, ...)
+            local packedArgs = table.pack(...)
+            local isThrow = tostring(packedArgs[1] or "") == "ThrowMolotov"
+            if isThrow then
+                noteMolotovThrowWindow()
+            end
+            local results = table.pack(itemHook.originalNetworkActivate(self, table.unpack(packedArgs, 1, packedArgs.n)))
+            if isThrow then
+                task.defer(function()
+                    applyMolotovTeleportPulse(true)
+                end)
+            end
+            return table.unpack(results, 1, results.n)
+        end
+        molotovItem.NetworkActivate = itemHook.networkActivateWrapper
+    end
+
+    local throw = rawget(molotovItem, "Throw") or molotovItem.Throw
+    if type(throw) == "function" and throw ~= itemHook.throwWrapper then
+        itemHook.originalThrow = throw
+        itemHook.throwWrapper = function(self, ...)
+            noteMolotovThrowWindow()
+            local results = table.pack(itemHook.originalThrow(self, ...))
+            task.defer(function()
+                applyMolotovTeleportPulse(true)
+            end)
+            return table.unpack(results, 1, results.n)
+        end
+        molotovItem.Throw = itemHook.throwWrapper
+    end
+end
+
 function isPlayerEspMethodEnabled(methodName)
     return type(S.playerEspMethods) == "table" and S.playerEspMethods[tostring(methodName)] == true
 end
@@ -5425,8 +6130,10 @@ end
 
 _Players.PlayerAdded:Connect(function()
     ensureValidDynamiteSelectedPlayer()
+    ensureValidMolotovSelectedPlayer()
     S._espLeaderboardStateMap = nil
     pruneDynamiteMarkedPlayers()
+    pruneMolotovMarkedPlayers()
     for _, syncFn in ipairs(_allDropdownSyncs) do
         pcall(syncFn)
     end
@@ -5437,13 +6144,19 @@ _Players.PlayerRemoving:Connect(function(player)
         ensureValidDynamiteSelectedPlayer()
         schedulePersist()
     end
+    if player and S.molotovSelectedPlayer == player.Name then
+        ensureValidMolotovSelectedPlayer()
+        schedulePersist()
+    end
     if player then
         removeDynamiteMarkedPlayer(player.Name)
+        removeMolotovMarkedPlayer(player.Name)
         S._staffCache[player.UserId] = nil
     end
     S._espLeaderboardStateMap = nil
     clearPlayerEspEntry(player)
     refreshDynamiteMarkVisuals()
+    refreshMolotovMarkVisuals()
     for _, syncFn in ipairs(_allDropdownSyncs) do
         pcall(syncFn)
     end
@@ -5519,6 +6232,44 @@ _RunService.Heartbeat:Connect(function(dt)
                 end
             end
         end
+    end
+end)
+end
+
+do
+local molotovActionAccumulator = 0
+local molotovMarkAccumulator = 0
+local molotovHookAccumulator = 0
+_RunService.Heartbeat:Connect(function(dt)
+    if destroyed or not isSessionActive() then
+        restoreMolotovSpectateCamera()
+        return
+    end
+
+    local frameDt = tonumber(dt) or 0.016
+    molotovActionAccumulator = molotovActionAccumulator + frameDt
+    molotovMarkAccumulator = molotovMarkAccumulator + frameDt
+    molotovHookAccumulator = molotovHookAccumulator + frameDt
+
+    if S.molotovMarkPlayersEnabled and molotovMarkAccumulator >= 0.25 then
+        molotovMarkAccumulator = 0
+        pruneMolotovMarkedPlayers()
+    end
+
+    updateMolotovSpectateCamera()
+
+    if S.molotovTpEnabled and molotovHookAccumulator >= 0.35 then
+        molotovHookAccumulator = 0
+        ensureMolotovTeleportHooks()
+    end
+
+    if molotovActionAccumulator < 0.05 then
+        return
+    end
+    molotovActionAccumulator = 0
+
+    if S.molotovTpEnabled then
+        applyMolotovTeleportPulse(false)
     end
 end)
 end
@@ -7086,6 +7837,11 @@ S.tweenMoveSpeed = math.clamp(math.floor(((tonumber(S.tweenMoveSpeed) or DEFAULT
         clearAllDynamiteMarkedPlayers()
     else
         pruneDynamiteMarkedPlayers()
+    end
+    if not S.molotovMarkPlayersEnabled then
+        clearAllMolotovMarkedPlayers()
+    else
+        pruneMolotovMarkedPlayers()
     end
 
     if type(ensureGunAimRenderLoop) == "function" and type(clearGunAimDrawings) == "function" then
@@ -13022,6 +13778,7 @@ function hasGunFeatureHooksEnabled()
         or S.fasterLassoEnabled
         or S.lassoTeleportEnabled
         or S.instantRobEnabled
+        or S.molotovTpEnabled
 end
 
 function hasGunAimVisualsEnabled()
@@ -16004,6 +16761,7 @@ function restoreGunFeatureHooks()
     restoreLassoSilentAimHooks()
     restoreLassoNoRopeLimitHook()
     restoreInstantRobHooks()
+    restoreMolotovTeleportHooks()
     restoreEquipWhileSwimmingHooks()
     clearGunAimDrawings()
 end
@@ -16069,6 +16827,12 @@ function ensureGunFeatureHooks()
         restoreLassoNoRopeLimitHook()
     end
 
+    if S.molotovTpEnabled then
+        ensureMolotovTeleportHooks()
+    else
+        restoreMolotovTeleportHooks()
+    end
+
     if hasGunAimVisualsEnabled() then
         ensureGunAimRenderLoop()
     else
@@ -16106,6 +16870,9 @@ function runGunFeaturePulse()
     end
     if S.lassoNoRopeLimitEnabled then
         ensureLassoNoRopeLimitHook()
+    end
+    if S.molotovTpEnabled then
+        ensureMolotovTeleportHooks()
     end
 end
 
@@ -24970,6 +25737,7 @@ function hasPlayerStateNetworkHookEnabled()
         or S.silentAimEnabled
         or S.fastProjectileEnabled
         or S.noSpreadEnabled
+        or S.molotovTpEnabled
 end
 
 function hasPlayerStateFeatureHooksEnabled()
@@ -25071,6 +25839,7 @@ function ensurePlayerStateNetworkHook()
             if shouldSuppressTrackedFastProjectileRemote(remoteName, packedArgs) then
                 return nil
             end
+            noteMolotovNetworkFire(remoteName, packedArgs)
             packedArgs = processGunProjectileRemote(remoteName, packedArgs) or packedArgs
 			return callOriginalNetworkFireServer(self, remoteName, packedArgs)
 		end
@@ -30086,6 +30855,20 @@ end
 
 function setInstantRobEnabled(isEnabled)
     return setSFeatureFlag("instantRobEnabled", isEnabled, "instant rob")
+end
+
+function setMolotovTpEnabled(isEnabled)
+    local changed, nextValue = setSFeatureFlag("molotovTpEnabled", isEnabled, "molotov tp", function(value)
+        if not value then
+            restoreMolotovTeleportHooks()
+        end
+    end)
+    if nextValue then
+        ensureMolotovTeleportHooks()
+    else
+        restoreMolotovTeleportHooks()
+    end
+    return changed, nextValue
 end
 
 function setPlayerEspEnabled(isEnabled)
@@ -36049,9 +36832,9 @@ function __westwareBuildWeaponsTab()
     tabTitles["WEAPONS"] = title
     _currentRegistryTab = "WEAPONS"
 
-    dynamiteList, dynamiteHeaderLabel = createCollapsibleSection("Dynamite misc", elementsList)
+    dynamiteList, dynamiteHeaderLabel = createCollapsibleSection("Dynamite tp", elementsList)
     dynamiteHeaderLabel.RichText = true
-    dynamiteHeaderLabel.Text = '<font color="#ffb64a">Dynamite misc</font>'
+    dynamiteHeaderLabel.Text = '<font color="#ffb64a">Dynamite tp</font>'
 
     tpDynamiteRow, _, tpDynamiteSync = createToggleRow("TP Dynamite", dynamiteList, function()
         return S.dynamiteTpEnabled
@@ -36088,6 +36871,8 @@ function __westwareBuildWeaponsTab()
     end, function()
         S.dynamiteSpectateEnabled = not S.dynamiteSpectateEnabled
         if S.dynamiteSpectateEnabled then
+            S.molotovSpectateEnabled = false
+            restoreMolotovSpectateCamera()
             updateDynamiteSpectateCamera()
         else
             restoreDynamiteSpectateCamera()
@@ -36145,6 +36930,91 @@ function __westwareBuildWeaponsTab()
 
     table.insert(_allUiSyncs, syncDynamiteRows)
     syncDynamiteRows()
+
+    local molotovList, molotovHeaderLabel = createCollapsibleSection("Molotov tp", elementsList)
+    molotovHeaderLabel.RichText = true
+    molotovHeaderLabel.Text = '<font color="#ff8c2d">Molotov tp</font>'
+
+    local tpMolotovRow, _, tpMolotovSync = createToggleRow("TP Molotov", molotovList, function()
+        return S.molotovTpEnabled
+    end, function()
+        local _, nextValue = setMolotovTpEnabled(not S.molotovTpEnabled)
+        schedulePersist()
+        spawnNotification("TP Molotov " .. (nextValue and "enabled." or "disabled."), nextValue and "success" or "warning", true)
+    end)
+
+    local molotovStyleRow, molotovStyleSync = createDropdownRow("TP Style", molotovList, {"Blatant", "Silent"}, function()
+        return S.molotovStyle
+    end, function(value)
+        local nextValue = tostring(value or "Blatant")
+        if nextValue ~= "Silent" then
+            nextValue = "Blatant"
+        end
+        S.molotovStyle = nextValue
+        schedulePersist()
+        spawnNotification("Molotov style set to " .. S.molotovStyle .. ".", "info", true)
+    end)
+
+    local molotovSpectateRow, _, molotovSpectateSync = createToggleRow("Spectate", molotovList, function()
+        return S.molotovSpectateEnabled
+    end, function()
+        S.molotovSpectateEnabled = not S.molotovSpectateEnabled
+        if S.molotovSpectateEnabled then
+            S.dynamiteSpectateEnabled = false
+            restoreDynamiteSpectateCamera()
+            updateMolotovSpectateCamera()
+        else
+            restoreMolotovSpectateCamera()
+        end
+        schedulePersist()
+        spawnNotification("Molotov spectate " .. (S.molotovSpectateEnabled and "enabled." or "disabled."), S.molotovSpectateEnabled and "success" or "warning", true)
+    end)
+
+    local molotovSelectPlayerRow, molotovSelectPlayerSync = createDropdownRow("Select Player", molotovList, function()
+        return getMolotovPlayerOptions()
+    end, function()
+        return ensureValidMolotovSelectedPlayer()
+    end, function(value)
+        S.molotovSelectedPlayer = tostring(value or "No Players")
+        ensureValidMolotovSelectedPlayer()
+        if S.molotovSpectateEnabled then
+            updateMolotovSpectateCamera()
+        end
+        schedulePersist()
+        spawnNotification("Molotov player target set to " .. tostring(S.molotovSelectedPlayer) .. ".", "info", true)
+    end)
+
+    local molotovMarkPlayersRow, molotovMarkPlayersSync = createToggleKeybindRow("Mark Players", molotovList, Color3.fromRGB(255, 126, 30), function()
+        return S.molotovMarkPlayersEnabled
+    end, function()
+        S.molotovMarkPlayersEnabled = not S.molotovMarkPlayersEnabled
+        if S.molotovMarkPlayersEnabled then
+            spawnNotification("Hover your mouse and press " .. formatKeyCodeName(S.keybinds.molotovMark or Enum.KeyCode.G) .. " over a player to mark them for the next molotov.", "info", true)
+        else
+            clearAllMolotovMarkedPlayers()
+            refreshMolotovMarkVisuals()
+            spawnNotification("Molotov player marking disabled.", "warning", true)
+        end
+        schedulePersist()
+    end, function()
+        return formatKeyCodeName(S.keybinds.molotovMark or Enum.KeyCode.G)
+    end, function(keyCode)
+        S.keybinds.molotovMark = keyCode or Enum.KeyCode.G
+        schedulePersist()
+        spawnNotification("Molotov mark key set to " .. formatKeyCodeName(S.keybinds.molotovMark) .. ".", "success", true)
+    end, "Press a key. Esc cancels, Delete resets to G.")
+
+    local function syncMolotovRows()
+        ensureValidMolotovSelectedPlayer()
+        pcall(tpMolotovSync)
+        pcall(molotovStyleSync)
+        pcall(molotovSpectateSync)
+        pcall(molotovSelectPlayerSync)
+        pcall(molotovMarkPlayersSync)
+    end
+
+    table.insert(_allUiSyncs, syncMolotovRows)
+    syncMolotovRows()
 
     initWeaponsGunsSection(elementsList)
     initWeaponsLassoSection(elementsList)
@@ -37024,6 +37894,16 @@ function __westwareConnectPanicKey()
                     restoreDynamiteSpectateCamera()
                 end
             end)
+            pcall(function()
+                if type(restoreMolotovSpectateCamera) == "function" then
+                    restoreMolotovSpectateCamera()
+                end
+            end)
+            pcall(function()
+                if type(restoreMolotovTeleportHooks) == "function" then
+                    restoreMolotovTeleportHooks()
+                end
+            end)
             for _, gui in ipairs(_extraCleanupGuis) do
                 pcall(function()
                     gui:Destroy()
@@ -37107,6 +37987,12 @@ function __westwareConnectFeatureKeybinds()
         if keyCode == (S.keybinds.dynamiteMark or Enum.KeyCode.F) then
             toggleHoveredDynamitePlayerMark()
             if S.dynamiteTarget == "Player" and S.dynamiteMarkPlayersEnabled then
+                return
+            end
+        end
+        if keyCode == (S.keybinds.molotovMark or Enum.KeyCode.G) then
+            toggleHoveredMolotovPlayerMark()
+            if S.molotovMarkPlayersEnabled then
                 return
             end
         end
