@@ -7760,6 +7760,8 @@ LASSO_FAST_CHARGE_MIN_TIME = 0.05
 LASSO_TELEPORT_MAX_DISTANCE = 29
 LASSO_TELEPORT_HIT_DELAY = 0.06
 LASSO_TELEPORT_RANGE_WARNING = "Players beyond 30 studs cannot be lasso tped."
+GUN_AIM_VISUAL_TARGET_REFRESH_INTERVAL = 0.08
+LASSO_AIM_VISUAL_TARGET_REFRESH_INTERVAL = 0.1
 WALL_BANG_PENETRATION = 100000
 FAST_PROJECTILE_MAX_TRAVEL_TIME = 9.75
 FAST_PROJECTILE_TRACK_BUFFER = 1
@@ -7772,6 +7774,10 @@ gunFeatureState = {
     warnedAimUnavailable = false,
     currentTargetInfo = nil,
     currentLassoTargetInfo = nil,
+    visualTargetInfo = nil,
+    visualLassoTargetInfo = nil,
+    lastVisualTargetScanAt = 0,
+    lastVisualLassoTargetScanAt = 0,
     lastProjectileTravelTime = nil,
     fovCircle = nil,
     fovSquare = nil,
@@ -16078,6 +16084,10 @@ function clearGunAimDrawings()
     gunFeatureState.fovPolygonLines = {}
     gunFeatureState.currentTargetInfo = nil
     gunFeatureState.currentLassoTargetInfo = nil
+    gunFeatureState.visualTargetInfo = nil
+    gunFeatureState.visualLassoTargetInfo = nil
+    gunFeatureState.lastVisualTargetScanAt = 0
+    gunFeatureState.lastVisualLassoTargetScanAt = 0
 end
 
 function ensureGunAimDrawings()
@@ -16155,11 +16165,59 @@ function getGunSnaplineColor(targetInfo)
     return Color3.new(1, 1, 1)
 end
 
+function projectAimVisualTargetInfo(targetInfo)
+    local camera = workspace.CurrentCamera
+    local targetPart = targetInfo and targetInfo.part
+    if not camera or not targetPart or not targetPart:IsA("BasePart") or not targetPart:IsDescendantOf(workspace) then
+        return nil
+    end
+
+    local screenPoint, onScreen = camera:WorldToViewportPoint(targetPart.Position)
+    if not onScreen then
+        return nil
+    end
+
+    targetInfo.screenPosition = Vector2.new(screenPoint.X, screenPoint.Y)
+    targetInfo.worldDistance = (targetPart.Position - camera.CFrame.Position).Magnitude
+    targetInfo.position = targetPart.Position
+    return targetInfo
+end
+
+function getCachedGunVisualTargetInfo()
+    local now = os.clock()
+    local cachedTarget = gunFeatureState.visualTargetInfo
+    local lastScanAt = tonumber(gunFeatureState.lastVisualTargetScanAt) or 0
+    if (now - lastScanAt) < GUN_AIM_VISUAL_TARGET_REFRESH_INTERVAL then
+        return projectAimVisualTargetInfo(cachedTarget)
+    end
+
+    local targetInfo = getSilentAimTargetInfo()
+    gunFeatureState.visualTargetInfo = targetInfo
+    gunFeatureState.lastVisualTargetScanAt = now
+    return targetInfo
+end
+
+function getCachedLassoVisualTargetInfo()
+    local now = os.clock()
+    local cachedTarget = gunFeatureState.visualLassoTargetInfo
+    local lastScanAt = tonumber(gunFeatureState.lastVisualLassoTargetScanAt) or 0
+    if (now - lastScanAt) < LASSO_AIM_VISUAL_TARGET_REFRESH_INTERVAL then
+        return projectAimVisualTargetInfo(cachedTarget)
+    end
+
+    local targetInfo = getLassoSilentAimTargetInfo()
+    gunFeatureState.visualLassoTargetInfo = targetInfo
+    gunFeatureState.lastVisualLassoTargetScanAt = now
+    return targetInfo
+end
+
 function updateGunAimVisuals()
     if not hasGunAimVisualsEnabled() then
         hideGunAimDrawings()
         gunFeatureState.currentTargetInfo = nil
         gunFeatureState.currentLassoTargetInfo = nil
+        gunFeatureState.visualTargetInfo = nil
+        gunFeatureState.visualLassoTargetInfo = nil
         return
     end
     if not ensureGunAimDrawings() then
@@ -16169,10 +16227,18 @@ function updateGunAimVisuals()
     local cursor = getGunAimCursorPosition()
     local radius = math.clamp(tonumber(S.gunFovRadius) or 200, 10, 2000)
     local shapeName = tostring(S.gunFovShape or "Circle")
-    local targetInfo = S.silentAimEnabled and getSilentAimTargetInfo() or nil
-    local lassoTargetInfo = (S.lassoSilentAimEnabled and S.lassoSnaplineEnabled) and getLassoSilentAimTargetInfo() or nil
+    local needsGunTarget = S.silentAimEnabled and S.gunSnaplineEnabled
+    local needsLassoTarget = S.lassoSilentAimEnabled and S.lassoSnaplineEnabled
+    local targetInfo = needsGunTarget and getCachedGunVisualTargetInfo() or nil
+    local lassoTargetInfo = needsLassoTarget and getCachedLassoVisualTargetInfo() or nil
     gunFeatureState.currentTargetInfo = targetInfo
     gunFeatureState.currentLassoTargetInfo = lassoTargetInfo
+    if not needsGunTarget then
+        gunFeatureState.visualTargetInfo = nil
+    end
+    if not needsLassoTarget then
+        gunFeatureState.visualLassoTargetInfo = nil
+    end
 
     hideGunAimDrawings()
 
