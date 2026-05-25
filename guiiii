@@ -7327,7 +7327,7 @@ PLAYER_SPEED_CHANGER_WALKSPEED_CAP = 34
 PLAYER_SPEED_CHANGER_ACCEL = 115
 PLAYER_SPEED_CHANGER_RUBBERBAND_BACKOFF_SECONDS = 1.6
 PLAYER_SPEED_CHANGER_RUBBERBAND_BACKOFF_MULTIPLIER = 0.65
-PLAYER_SPEED_CHANGER_MOVE_SPEED_KEYS = {"Walk", "Sprint", "SprintMelee", "InAir"}
+PLAYER_SPEED_CHANGER_MOVE_SPEED_KEYS = {"Walk", "Sprint", "SprintMelee", "InAir", "Crouch"}
 CFRAME_SPEED_MAX = 300
 CFRAME_FLY_SPEED_MAX = 300
 CFRAME_FLY_OFFSET_MIN = 1
@@ -14145,6 +14145,29 @@ function findSilentAimNamedBasePart(container, partNames)
     return nil
 end
 
+function findSilentAimDirectDamagePart(container, partNames)
+    if typeof(container) ~= "Instance" then
+        return nil
+    end
+
+    for _, partName in ipairs(partNames) do
+        if partName ~= "HumanoidRootPart" then
+            local part = container:FindFirstChild(partName)
+            if part and part:IsA("BasePart") then
+                return part
+            end
+        end
+    end
+
+    for _, child in ipairs(container:GetChildren()) do
+        if child:IsA("BasePart") and child.Name ~= "HumanoidRootPart" then
+            return child
+        end
+    end
+
+    return nil
+end
+
 function getSilentAimMappedPart(sourceObject, partNames)
     local characterMap = getSilentAimObjectField(sourceObject, "CharacterMap")
     if isTable(characterMap) then
@@ -14173,6 +14196,10 @@ function getSilentAimTargetPart(character, kind, sourceObject)
     end
 
     local partNames = getSilentAimPartOrder(kind)
+    if kind == "NPCs" or kind == "Entities" then
+        return findSilentAimDirectDamagePart(container, partNames)
+    end
+
     local mappedPart = getSilentAimMappedPart(sourceObject, partNames)
     if mappedPart then
         return mappedPart
@@ -14368,9 +14395,10 @@ function getSilentAimTargetsByPriority()
     if isTable(clientNPCs) then
         local npcMap = rawget(clientNPCs, "NPC_Map") or clientNPCs.NPC_Map
         if isTable(npcMap) then
-            for _, npcObject in pairs(npcMap) do
+            for npcModel, npcObject in pairs(npcMap) do
                 if isTable(npcObject) then
-                    appendSilentAimTarget(groupedTargets.NPCs, seenTargets, "NPCs", nil, nil, npcObject)
+                    local model = typeof(npcModel) == "Instance" and npcModel or nil
+                    appendSilentAimTarget(groupedTargets.NPCs, seenTargets, "NPCs", model, nil, npcObject)
                 end
             end
         end
@@ -14975,6 +15003,39 @@ function getFastProjectileTargetFlags(targetInfo)
     return playerTarget, animalTarget, npcTarget
 end
 
+function resolveFastProjectileNpcFinalTarget(targetInfo)
+    local targetPart = targetInfo and targetInfo.part
+    if not targetPart or not targetPart:IsA("BasePart") or targetPart.Name == "HumanoidRootPart" then
+        return nil
+    end
+
+    local npcModel = targetPart.Parent
+    if typeof(npcModel) ~= "Instance" then
+        return nil
+    end
+
+    local npcObject = nil
+    local clientNPCs = resolveSilentAimClientNPCs(false) or resolveSilentAimClientNPCs(true)
+    local npcMap = isTable(clientNPCs) and (rawget(clientNPCs, "NPC_Map") or clientNPCs.NPC_Map) or nil
+    local mapEntry = isTable(npcMap) and npcMap[npcModel] or nil
+    if isTable(mapEntry) then
+        npcObject = rawget(mapEntry, "obj") or mapEntry.obj
+    elseif mapEntry ~= nil then
+        npcObject = mapEntry
+    end
+
+    local sourceObject = targetInfo and targetInfo.sourceObject
+    if npcObject == nil and isTable(sourceObject) then
+        npcObject = rawget(sourceObject, "obj") or sourceObject.obj
+    end
+
+    if npcObject == nil then
+        return nil
+    end
+
+    return { npcObject, targetPart.Name }
+end
+
 function estimateFastProjectileTravelTime(projectileEntry, targetInfo)
     local travelTime = tonumber(gunFeatureState.lastProjectileTravelTime)
     if travelTime and travelTime >= 0 then
@@ -15070,13 +15131,13 @@ function scheduleFastProjectileFinalEvent(targetInfo, projectileEntry, bulletIds
     if not shouldForceFastProjectileFinalEvent(targetInfo, projectileEntry, travelTime) then
         return
     end
-    local finalTime = getFastProjectileFinalTime(projectileEntry, travelTime)
-    trackFastProjectileBullets(bulletIdList, travelTime + FAST_PROJECTILE_TRACK_BUFFER)
-    local npcResolvedTarget = nil
-    if npcTarget then
-        npcResolvedTarget = { targetPart.Parent and targetPart.Parent.Parent or targetPart.Parent, targetPart.Name }
+    local npcResolvedTarget = npcTarget and resolveFastProjectileNpcFinalTarget(targetInfo) or nil
+    if npcTarget and npcResolvedTarget == nil then
+        return
     end
     local animalResolvedTarget = animalTarget and targetPart or nil
+    local finalTime = getFastProjectileFinalTime(projectileEntry, travelTime)
+    trackFastProjectileBullets(bulletIdList, travelTime + FAST_PROJECTILE_TRACK_BUFFER)
     local targetMaterialName = targetPart.Material.Name
 
     task.spawn(function()
