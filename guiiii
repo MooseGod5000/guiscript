@@ -7763,8 +7763,6 @@ FAST_PROJECTILE_MAX_TRAVEL_TIME = 9.75
 FAST_PROJECTILE_TRACK_BUFFER = 1
 FAST_PROJECTILE_FORCED_HIT_MAX_DISTANCE = 550
 FAST_PROJECTILE_FORCED_HIT_MAX_TRAVEL_TIME = 0.75
-FAST_PROJECTILE_REWIND_HIT_DELAY = 0.08
-FAST_PROJECTILE_SERVER_TRUST_SPEED = 12000
 FAST_RELOAD_SPEED_MULTIPLIER = 4
 FAST_RELOAD_MAX_ANIM_SPEED = 7
 gunFeatureState = {
@@ -7779,8 +7777,6 @@ gunFeatureState = {
     snapline = nil,
     lassoSnapline = nil,
     trackedFastProjectileBullets = {},
-    fastProjectileTravelTimes = setmetatable({}, { __mode = "k" }),
-    fastProjectileRewoundEntries = setmetatable({}, { __mode = "k" }),
     hookedCamModule = nil,
     originalCamAddRecoil = nil,
     camAddRecoilWrapper = nil,
@@ -14504,119 +14500,21 @@ function applyNoSpreadToProjectileEntry(projectileEntry, projectileType, sharedD
     return true
 end
 
-function ensureFastProjectileWeakTables()
-    if type(gunFeatureState.fastProjectileTravelTimes) ~= "table" then
-        gunFeatureState.fastProjectileTravelTimes = setmetatable({}, { __mode = "k" })
-    end
-    if type(gunFeatureState.fastProjectileRewoundEntries) ~= "table" then
-        gunFeatureState.fastProjectileRewoundEntries = setmetatable({}, { __mode = "k" })
-    end
-end
-
-function setFastProjectileEntryTravelTime(projectileEntry, travelTime)
-    if not isTable(projectileEntry) then
-        return
-    end
-    ensureFastProjectileWeakTables()
-    local duration = tonumber(travelTime)
-    if duration and duration > 0 then
-        gunFeatureState.fastProjectileTravelTimes[projectileEntry] = math.clamp(duration, 0.01, FAST_PROJECTILE_MAX_TRAVEL_TIME)
-    else
-        gunFeatureState.fastProjectileTravelTimes[projectileEntry] = nil
-    end
-end
-
-function getFastProjectileEntryTravelTime(projectileEntry)
-    if not isTable(projectileEntry) or type(gunFeatureState.fastProjectileTravelTimes) ~= "table" then
-        return nil
-    end
-    local travelTime = tonumber(gunFeatureState.fastProjectileTravelTimes[projectileEntry])
-    if travelTime and travelTime > 0 then
-        return math.clamp(travelTime, 0.01, FAST_PROJECTILE_MAX_TRAVEL_TIME)
-    end
-    return nil
-end
-
-function markFastProjectileEntryRewound(projectileEntry, travelTime, delaySeconds)
-    if not isTable(projectileEntry) then
-        return
-    end
-    ensureFastProjectileWeakTables()
-    gunFeatureState.fastProjectileRewoundEntries[projectileEntry] = {
-        travelTime = math.clamp(tonumber(travelTime) or 0.01, 0.01, FAST_PROJECTILE_MAX_TRAVEL_TIME),
-        delay = math.clamp(tonumber(delaySeconds) or FAST_PROJECTILE_REWIND_HIT_DELAY, 0.03, 0.2),
-    }
-end
-
-function getFastProjectileEntryRewind(projectileEntry)
-    if not isTable(projectileEntry) or type(gunFeatureState.fastProjectileRewoundEntries) ~= "table" then
-        return nil
-    end
-    local rewrite = gunFeatureState.fastProjectileRewoundEntries[projectileEntry]
-    return type(rewrite) == "table" and rewrite or nil
-end
-
-function getFastProjectileEntrySpeed(projectileEntry)
-    if not isTable(projectileEntry) then
-        return nil
-    end
-
-    local speed = tonumber(projectileEntry.projectileSpeed)
-        or tonumber(projectileEntry.speed)
-        or (typeof(projectileEntry.velocity) == "Vector3" and projectileEntry.velocity.Magnitude)
-        or tonumber(projectileEntry.power)
-    if speed and speed > 0 then
-        return speed
-    end
-    return nil
-end
-
-function setFastProjectileEntryStartTime(projectileEntry, startTime)
-    if not isTable(projectileEntry) then
-        return false
-    end
-
-    local syncedStartTime = tonumber(startTime)
-    if not syncedStartTime or syncedStartTime <= 0 then
-        return false
-    end
-
-    local changed = false
-    local hasLowerStart = rawget(projectileEntry, "startTime") ~= nil
-    local hasUpperStart = rawget(projectileEntry, "StartTime") ~= nil
-
-    if hasLowerStart then
-        projectileEntry.startTime = syncedStartTime
-        changed = true
-    end
-    if hasUpperStart or not hasLowerStart then
-        projectileEntry.StartTime = syncedStartTime
-        changed = true
-    end
-
-    return changed
-end
-
 function applyFastProjectileToEntry(projectileEntry, targetInfo)
     if not isTable(projectileEntry) then
         return false
     end
 
-    local changed = false
     local direction = typeof(projectileEntry.direction) == "Vector3" and projectileEntry.direction or nil
     if (not direction or direction.Magnitude <= 0.001) and typeof(projectileEntry.velocity) == "Vector3" and projectileEntry.velocity.Magnitude > 0.001 then
         direction = projectileEntry.velocity.Unit
     end
-
-    local origin = getProjectileEntryOrigin(projectileEntry)
-    local toTarget = nil
-    if targetInfo and typeof(targetInfo.position) == "Vector3" and typeof(origin) == "Vector3" then
-        toTarget = targetInfo.position - origin
-        if toTarget.Magnitude > 0.001 then
-            direction = toTarget.Unit
-            if typeof(projectileEntry.direction) ~= "Vector3" or (projectileEntry.direction - direction).Magnitude > 0.0001 then
-                projectileEntry.direction = direction
-                changed = true
+    if (not direction or direction.Magnitude <= 0.001) and targetInfo and typeof(targetInfo.position) == "Vector3" then
+        local origin = getProjectileEntryOrigin(projectileEntry)
+        if typeof(origin) == "Vector3" then
+            local toTarget = targetInfo.position - origin
+            if toTarget.Magnitude > 0.001 then
+                direction = toTarget.Unit
             end
         end
     end
@@ -14624,43 +14522,11 @@ function applyFastProjectileToEntry(projectileEntry, targetInfo)
     if typeof(direction) == "Vector3" and direction.Magnitude > 0.001 then
         if typeof(projectileEntry.direction) ~= "Vector3" or projectileEntry.direction.Magnitude <= 0.001 then
             projectileEntry.direction = direction.Unit
-            changed = true
+            return true
         end
     end
 
-    if toTarget and toTarget.Magnitude > 0.001 and typeof(direction) == "Vector3" and direction.Magnitude > 0.001 then
-        local distance = toTarget.Magnitude
-        local currentSpeed = getFastProjectileEntrySpeed(projectileEntry) or 1000
-        local neededSpeed = distance / math.max(FAST_PROJECTILE_FORCED_HIT_MAX_TRAVEL_TIME, 0.1)
-        local desiredSpeed = math.max(currentSpeed, math.min(neededSpeed, FAST_PROJECTILE_SERVER_TRUST_SPEED))
-        local travelTime = math.clamp(distance / math.max(desiredSpeed, 1), 0.01, FAST_PROJECTILE_MAX_TRAVEL_TIME)
-
-        if typeof(projectileEntry.velocity) == "Vector3" and projectileEntry.velocity.Magnitude > 0.001 then
-            projectileEntry.velocity = direction.Unit * desiredSpeed
-            changed = true
-        end
-        if type(projectileEntry.speed) == "number" then
-            projectileEntry.speed = desiredSpeed
-            changed = true
-        end
-        if type(projectileEntry.projectileSpeed) == "number" then
-            projectileEntry.projectileSpeed = desiredSpeed
-            changed = true
-        end
-
-        setFastProjectileEntryTravelTime(projectileEntry, travelTime)
-        if distance > FAST_PROJECTILE_FORCED_HIT_MAX_DISTANCE or travelTime > FAST_PROJECTILE_FORCED_HIT_MAX_TRAVEL_TIME then
-            local hitDelay = FAST_PROJECTILE_REWIND_HIT_DELAY
-            local startTime = getSyncedNetworkTime() - travelTime + hitDelay
-            local didRewindStart = setFastProjectileEntryStartTime(projectileEntry, startTime)
-            if didRewindStart then
-                changed = true
-                markFastProjectileEntryRewound(projectileEntry, travelTime, hitDelay)
-            end
-        end
-    end
-
-    return changed
+    return false
 end
 
 function getFastProjectileBulletIdList(bulletIds)
@@ -14789,11 +14655,6 @@ function getFastProjectileTargetFlags(targetInfo)
 end
 
 function estimateFastProjectileTravelTime(projectileEntry, targetInfo)
-    local entryTravelTime = getFastProjectileEntryTravelTime(projectileEntry)
-    if entryTravelTime then
-        return entryTravelTime
-    end
-
     local travelTime = tonumber(gunFeatureState.lastProjectileTravelTime)
     if travelTime and travelTime >= 0 then
         return math.clamp(travelTime, 0.01, FAST_PROJECTILE_MAX_TRAVEL_TIME)
@@ -14836,17 +14697,11 @@ function shouldForceFastProjectileFinalEvent(targetInfo, projectileEntry, travel
     end
 
     local distance = (targetPosition - origin).Magnitude
-    local duration = tonumber(travelTime)
-    local rewindInfo = getFastProjectileEntryRewind(projectileEntry)
-    if rewindInfo then
-        local maxDistance = math.clamp(tonumber(S.silentAimDistanceLimit) or 1000, 10, 20000) + 25
-        return distance <= maxDistance and (not duration or duration <= FAST_PROJECTILE_MAX_TRAVEL_TIME)
-    end
-
     if distance > FAST_PROJECTILE_FORCED_HIT_MAX_DISTANCE then
         return false
     end
 
+    local duration = tonumber(travelTime)
     if duration and duration > FAST_PROJECTILE_FORCED_HIT_MAX_TRAVEL_TIME then
         return false
     end
@@ -14894,12 +14749,8 @@ function scheduleFastProjectileFinalEvent(targetInfo, projectileEntry, bulletIds
     if not shouldForceFastProjectileFinalEvent(targetInfo, projectileEntry, travelTime) then
         return
     end
-    local rewindInfo = getFastProjectileEntryRewind(projectileEntry)
-    local waitTime = travelTime
-    if rewindInfo then
-        waitTime = math.clamp(tonumber(rewindInfo.delay) or FAST_PROJECTILE_REWIND_HIT_DELAY, 0.03, 0.2)
-    end
-    trackFastProjectileBullets(bulletIdList, math.max(waitTime, travelTime) + FAST_PROJECTILE_TRACK_BUFFER)
+    local finalTime = getFastProjectileFinalTime(projectileEntry, travelTime)
+    trackFastProjectileBullets(bulletIdList, travelTime + FAST_PROJECTILE_TRACK_BUFFER)
     local npcResolvedTarget = nil
     if npcTarget then
         npcResolvedTarget = { targetPart.Parent and targetPart.Parent.Parent or targetPart.Parent, targetPart.Name }
@@ -14908,7 +14759,7 @@ function scheduleFastProjectileFinalEvent(targetInfo, projectileEntry, bulletIds
     local targetMaterialName = targetPart.Material.Name
 
     task.spawn(function()
-        task.wait(waitTime)
+        task.wait(travelTime)
 
         local network = playerState.hookedNetwork or resolveGlobalNetwork(false) or resolveGlobalNetwork(true)
         local fireServer = type(playerState.originalNetworkFireServer) == "function" and playerState.originalNetworkFireServer
@@ -14940,7 +14791,6 @@ function scheduleFastProjectileFinalEvent(targetInfo, projectileEntry, bulletIds
         local objectHit = targetCFrame:PointToObjectSpace(hitPosition)
         local frontNormal = targetCFrame:VectorToObjectSpace(Vector3.FromNormalId(Enum.NormalId.Front))
         local directionObject = targetCFrame:VectorToObjectSpace(velocity.Unit)
-        local finalTime = getFastProjectileFinalTime(projectileEntry, travelTime)
         local resolvedTarget = targetReference
         if npcTarget then
             resolvedTarget = npcResolvedTarget
