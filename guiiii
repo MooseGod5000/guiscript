@@ -2084,36 +2084,45 @@ hubWrapper.BorderSizePixel = 0
 hubWrapper.Visible = false
 hubWrapper.Parent = hubGui
 
-local hubTiltGhost = Instance.new("Frame")
-hubTiltGhost.Name = "HubTiltGhost"
-hubTiltGhost.Size = UDim2.new(1, 0, 1, 0)
-hubTiltGhost.Position = UDim2.new(0.5, 0, 0.5, 0)
-hubTiltGhost.AnchorPoint = Vector2.new(0.5, 0.5)
-hubTiltGhost.BackgroundColor3 = Color3.fromRGB(8, 8, 8)
-hubTiltGhost.BackgroundTransparency = 0.45
-hubTiltGhost.BorderSizePixel = 0
-hubTiltGhost.ZIndex = 1
-hubTiltGhost.Parent = hubWrapper
-Instance.new("UICorner", hubTiltGhost).CornerRadius = UDim.new(0, 12)
-local hubTiltGhostStroke = Instance.new("UIStroke", hubTiltGhost)
-hubTiltGhostStroke.Color = Color3.fromRGB(0, 150, 255)
-hubTiltGhostStroke.Transparency = 0.72
-hubTiltGhostStroke.Thickness = 1
+local hubTiltBackdrop = Instance.new("Frame")
+hubTiltBackdrop.Name = "HubTiltBackdrop"
+hubTiltBackdrop.Size = UDim2.new(1, 0, 1, 0)
+hubTiltBackdrop.Position = UDim2.new(0.5, 0, 0.5, 0)
+hubTiltBackdrop.AnchorPoint = Vector2.new(0.5, 0.5)
+hubTiltBackdrop.BackgroundColor3 = Color3.fromRGB(18, 18, 18)
+hubTiltBackdrop.BackgroundTransparency = S.guiTransparency / 100
+hubTiltBackdrop.BorderSizePixel = 0
+hubTiltBackdrop.ClipsDescendants = true
+hubTiltBackdrop.ZIndex = 1
+hubTiltBackdrop.Parent = hubWrapper
+Instance.new("UICorner", hubTiltBackdrop).CornerRadius = UDim.new(0, 12)
+
+local hubTiltSidebarBackdrop = Instance.new("Frame")
+hubTiltSidebarBackdrop.Name = "HubTiltSidebarBackdrop"
+hubTiltSidebarBackdrop.Size = UDim2.new(0, 140, 1, 0)
+hubTiltSidebarBackdrop.BackgroundColor3 = Color3.fromRGB(10, 10, 10)
+hubTiltSidebarBackdrop.BackgroundTransparency = S.guiTransparency / 100
+hubTiltSidebarBackdrop.BorderSizePixel = 0
+hubTiltSidebarBackdrop.ZIndex = 1
+hubTiltSidebarBackdrop.Parent = hubTiltBackdrop
 
 local hubMain = Instance.new("CanvasGroup")
 hubMain.Name = "HubMain"
 hubMain.Size = UDim2.new(1, 0, 1, 0)
 hubMain.BackgroundColor3 = Color3.fromRGB(18, 18, 18)
+hubMain.BackgroundTransparency = 1
 hubMain.BorderSizePixel = 0
 hubMain.ClipsDescendants = true
 hubMain.GroupTransparency = S.guiTransparency / 100
 hubMain.ZIndex = 2
+hubMain.Active = true
 hubMain.Parent = hubWrapper
 Instance.new("UICorner", hubMain).CornerRadius = UDim.new(0, 12)
 
 local sidebar = Instance.new("Frame")
 sidebar.Size = UDim2.new(0, 140, 1, 0)
 sidebar.BackgroundColor3 = Color3.fromRGB(10, 10, 10)
+sidebar.BackgroundTransparency = 1
 sidebar.BorderSizePixel = 0
 sidebar.ZIndex = 2
 sidebar.Parent = hubMain
@@ -2972,31 +2981,52 @@ local function createDraggableDropdown(titleText)
         end
     end
 
-    local dropTiltGhost = Instance.new("Frame")
-    dropTiltGhost.Size = UDim2.new(0, 240, 0, 220)
-    dropTiltGhost.Position = UDim2.new(0.5, -120, 0.5, -110)
-    dropTiltGhost.BackgroundColor3 = Color3.fromRGB(8, 8, 8)
-    dropTiltGhost.BackgroundTransparency = 0.5
-    dropTiltGhost.BorderSizePixel = 1
-    dropTiltGhost.BorderColor3 = Color3.fromRGB(0, 150, 255)
-    dropTiltGhost.ZIndex = 99
-    dropTiltGhost.Parent = dropGui
-    Instance.new("UICorner", dropTiltGhost).CornerRadius = UDim.new(0, 4)
+    local dropTiltBackdrop = Instance.new("Frame")
+    dropTiltBackdrop.Name = "DropdownTiltBackdrop"
+    dropTiltBackdrop.Size = UDim2.new(0, 240, 0, 220)
+    dropTiltBackdrop.Position = UDim2.new(0.5, -120, 0.5, -110)
+    dropTiltBackdrop.BackgroundColor3 = Color3.fromRGB(24, 24, 24)
+    dropTiltBackdrop.BorderSizePixel = 1
+    dropTiltBackdrop.BorderColor3 = Color3.fromRGB(60, 60, 60)
+    dropTiltBackdrop.ZIndex = 99
+    dropTiltBackdrop.ClipsDescendants = true
+    dropTiltBackdrop.Parent = dropGui
+    Instance.new("UICorner", dropTiltBackdrop).CornerRadius = UDim.new(0, 4)
+
+    local dropTiltHeaderBackdrop = Instance.new("Frame")
+    dropTiltHeaderBackdrop.Name = "DropdownTiltHeaderBackdrop"
+    dropTiltHeaderBackdrop.Size = UDim2.new(1, 0, 0, 26)
+    dropTiltHeaderBackdrop.BackgroundColor3 = Color3.fromRGB(18, 18, 18)
+    dropTiltHeaderBackdrop.BorderSizePixel = 0
+    dropTiltHeaderBackdrop.ZIndex = 100
+    dropTiltHeaderBackdrop.Parent = dropTiltBackdrop
+    Instance.new("UICorner", dropTiltHeaderBackdrop).CornerRadius = UDim.new(0, 4)
+
+    local dropTiltHeaderBlock = Instance.new("Frame")
+    dropTiltHeaderBlock.Size = UDim2.new(1, 0, 0, 4)
+    dropTiltHeaderBlock.Position = UDim2.new(0, 0, 1, -4)
+    dropTiltHeaderBlock.BackgroundColor3 = Color3.fromRGB(18, 18, 18)
+    dropTiltHeaderBlock.BorderSizePixel = 0
+    dropTiltHeaderBlock.ZIndex = 100
+    dropTiltHeaderBlock.Parent = dropTiltHeaderBackdrop
 
     local dropFrame = Instance.new("Frame")
     dropFrame.Size = UDim2.new(0, 240, 0, 220)
     dropFrame.Position = UDim2.new(0.5, -120, 0.5, -110)
     dropFrame.BackgroundColor3 = Color3.fromRGB(24, 24, 24)
-    dropFrame.BorderSizePixel = 1
+    dropFrame.BackgroundTransparency = 1
+    dropFrame.BorderSizePixel = 0
     dropFrame.BorderColor3 = Color3.fromRGB(60, 60, 60)
     dropFrame.ZIndex = 100
     dropFrame.ClipsDescendants = true
+    dropFrame.Active = true
     dropFrame.Parent = dropGui
     Instance.new("UICorner", dropFrame).CornerRadius = UDim.new(0, 4)
 
     local dropHeader = Instance.new("Frame")
     dropHeader.Size = UDim2.new(1, 0, 0, 26)
     dropHeader.BackgroundColor3 = Color3.fromRGB(18, 18, 18)
+    dropHeader.BackgroundTransparency = 1
     dropHeader.BorderSizePixel = 0
     dropHeader.ZIndex = 101
     dropHeader.Parent = dropFrame
@@ -3006,6 +3036,7 @@ local function createDraggableDropdown(titleText)
     dropHeaderBlock.Size = UDim2.new(1, 0, 0, 4)
     dropHeaderBlock.Position = UDim2.new(0, 0, 1, -4)
     dropHeaderBlock.BackgroundColor3 = Color3.fromRGB(18, 18, 18)
+    dropHeaderBlock.BackgroundTransparency = 1
     dropHeaderBlock.BorderSizePixel = 0
     dropHeaderBlock.ZIndex = 101
     dropHeaderBlock.Parent = dropHeader
@@ -3125,6 +3156,11 @@ local function createDraggableDropdown(titleText)
     local ddDragInput, ddDragStart, ddStartPos
     local ddTargetRot, ddCurrentRot, ddLastMouseX = 0, 0, nil
 
+    local function syncDropdownTiltBackdrop()
+        dropTiltBackdrop.Size = dropFrame.Size
+        dropTiltBackdrop.Position = dropFrame.Position
+    end
+
     dropFrame.InputBegan:Connect(function(input)
         if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
             ddDragging = true
@@ -3160,10 +3196,9 @@ local function createDraggableDropdown(titleText)
                 ddTargetRot = 0
             end
             ddCurrentRot = ddCurrentRot + (ddTargetRot - ddCurrentRot) * math.min(dt * 10, 1)
+            syncDropdownTiltBackdrop()
+            dropTiltBackdrop.Rotation = ddCurrentRot
             dropFrame.Rotation = 0
-            dropTiltGhost.Size = dropFrame.Size
-            dropTiltGhost.Position = dropFrame.Position
-            dropTiltGhost.Rotation = ddCurrentRot
         end
     end)
 
@@ -3191,15 +3226,24 @@ local function createDraggableDropdown(titleText)
             targetX = math.clamp(targetX, padding, maxX)
             targetY = math.clamp(targetY, padding, maxY)
             dropFrame.Position = UDim2.fromOffset(targetX, targetY)
+            syncDropdownTiltBackdrop()
             return
         end
 
         dropFrame.Position = UDim2.fromOffset(defaultX, defaultY)
+        syncDropdownTiltBackdrop()
     end
 
     local function showDropdown(anchorGuiObject)
         searchBox.Text = ""
         positionDropdown(anchorGuiObject)
+        ddDragging = false
+        ddDragInput = nil
+        ddTargetRot = 0
+        ddCurrentRot = 0
+        ddLastMouseX = nil
+        dropTiltBackdrop.Rotation = 0
+        syncDropdownTiltBackdrop()
         dropGui.Enabled = true
     end
 
@@ -14033,62 +14077,196 @@ function getGunAimCursorPosition()
     return Vector2.new(camera.ViewportSize.X * 0.5, camera.ViewportSize.Y * 0.5)
 end
 
-function getSilentAimPartByNames(model, names, recursive, rejectRootPart)
-    if not model then
+function getSilentAimObjectField(object, key)
+    if not isTable(object) then
         return nil
     end
-    for _, partName in ipairs(names) do
-        local part = model:FindFirstChild(partName, recursive == true)
-        if part and part:IsA("BasePart") and not (rejectRootPart and part.Name == "HumanoidRootPart") then
-            return part
-        end
+
+    local value = rawget(object, key)
+    if value ~= nil then
+        return value
+    end
+
+    local ok, result = pcall(function()
+        return object[key]
+    end)
+    if ok then
+        return result
     end
     return nil
 end
 
-function getSilentAimFallbackBasePart(model, rejectRootPart)
-    if not model then
-        return nil
+function getSilentAimNumericValue(value)
+    if type(value) == "number" then
+        return value
+    end
+    if typeof(value) == "Instance" then
+        local ok, instanceValue = pcall(function()
+            return value.Value
+        end)
+        if ok and type(instanceValue) == "number" then
+            return instanceValue
+        end
+    end
+    return tonumber(value)
+end
+
+function getSilentAimAttribute(sourceObject, attributeName)
+    if typeof(sourceObject) == "Instance" then
+        local ok, value = pcall(function()
+            return sourceObject:GetAttribute(attributeName)
+        end)
+        if ok and value ~= nil then
+            return value
+        end
     end
 
-    local root = getTwwModelRoot(model)
-    if root and root:IsA("BasePart") and not (rejectRootPart and root.Name == "HumanoidRootPart") then
-        return root
+    local attributes = getSilentAimObjectField(sourceObject, "Attributes")
+    if isTable(attributes) then
+        local value = getSilentAimObjectField(attributes, attributeName)
+        if value ~= nil then
+            return value
+        end
+        local getAttribute = getSilentAimObjectField(attributes, "GetAttribute")
+        if type(getAttribute) == "function" then
+            local ok, result = pcall(getAttribute, attributes, attributeName)
+            if ok then
+                return result
+            end
+        end
+    elseif typeof(attributes) == "Instance" then
+        local ok, value = pcall(function()
+            return attributes:GetAttribute(attributeName)
+        end)
+        if ok then
+            return value
+        end
     end
 
-    for _, descendant in ipairs(model:GetDescendants()) do
-        if descendant:IsA("BasePart") and not (rejectRootPart and descendant.Name == "HumanoidRootPart") then
-            return descendant
+    return getSilentAimObjectField(sourceObject, attributeName)
+end
+
+function resolveSilentAimTargetContainer(container, sourceObject)
+    local candidates = {
+        container,
+        getSilentAimObjectField(sourceObject, "Character"),
+        getSilentAimObjectField(sourceObject, "character"),
+        getSilentAimObjectField(sourceObject, "Model"),
+        getSilentAimObjectField(sourceObject, "model"),
+        getSilentAimObjectField(sourceObject, "Rig"),
+        getSilentAimObjectField(sourceObject, "obj"),
+        getSilentAimObjectField(sourceObject, "RootPart"),
+        getSilentAimObjectField(sourceObject, "ApplyRootCFramePart"),
+        getSilentAimObjectField(sourceObject, "hrp"),
+        getSilentAimObjectField(sourceObject, "Body"),
+    }
+
+    for _, candidate in ipairs(candidates) do
+        if typeof(candidate) == "Instance" then
+            if candidate:IsA("Model") or candidate:IsA("Folder") then
+                return candidate
+            end
+            if candidate:IsA("BasePart") then
+                return candidate.Parent
+            end
         end
     end
 
     return nil
 end
 
-function getSilentAimTargetPart(character, targetKind)
-    if not character then
-        return nil
-    end
-
+function getSilentAimPartOrder(kind)
     local preferTorso = tostring(S.silentAimBodyTarget or "Head") == "Torso"
-    local kind = tostring(targetKind or "Players")
-    local rejectRootPart = kind == "NPCs" or kind == "Entities"
+    if kind == "Entities" then
+        if preferTorso then
+            return {"Body", "RealBody", "UpperTorso", "Torso", "HumanoidRootPart", "Head"}
+        end
+        return {"Head", "Body", "RealBody", "UpperTorso", "Torso", "HumanoidRootPart"}
+    end
 
-    if kind == "NPCs" or kind == "Entities" then
-        local npcAnimalNames = preferTorso
-            and {"Body", "UpperTorso", "Torso", "Head", "LowerTorso"}
-            or {"Head", "Body", "UpperTorso", "Torso", "LowerTorso"}
-        return getSilentAimPartByNames(character, npcAnimalNames, true, true)
-            or getSilentAimFallbackBasePart(character, true)
+    if kind == "NPCs" then
+        if preferTorso then
+            return {"UpperTorso", "Torso", "Body", "RootPart", "HumanoidRootPart", "Head"}
+        end
+        return {"Head", "UpperTorso", "Torso", "Body", "RootPart", "HumanoidRootPart"}
     end
 
     if preferTorso then
-        return getSilentAimPartByNames(character, {"UpperTorso", "Torso", "HumanoidRootPart"}, false, rejectRootPart)
-            or getRootPart(character)
+        return {"UpperTorso", "Torso", "HumanoidRootPart", "Head"}
+    end
+    return {"Head", "UpperTorso", "Torso", "HumanoidRootPart"}
+end
+
+function findSilentAimNamedBasePart(container, partNames)
+    if typeof(container) ~= "Instance" then
+        return nil
     end
 
-    return getSilentAimPartByNames(character, {"Head", "UpperTorso", "Torso", "HumanoidRootPart"}, false, rejectRootPart)
-        or getRootPart(character)
+    for _, partName in ipairs(partNames) do
+        local part = container:FindFirstChild(partName)
+        if part and part:IsA("BasePart") then
+            return part
+        end
+    end
+
+    for _, partName in ipairs(partNames) do
+        local part = container:FindFirstChild(partName, true)
+        if part and part:IsA("BasePart") then
+            return part
+        end
+    end
+
+    return nil
+end
+
+function getSilentAimMappedPart(sourceObject, partNames)
+    local characterMap = getSilentAimObjectField(sourceObject, "CharacterMap")
+    if isTable(characterMap) then
+        for _, partName in ipairs(partNames) do
+            local mappedPart = getSilentAimObjectField(characterMap, partName)
+            if typeof(mappedPart) == "Instance" and mappedPart:IsA("BasePart") then
+                return mappedPart
+            end
+        end
+    end
+
+    for _, fieldName in ipairs({"Head", "Body", "RealBody", "RootPart", "ApplyRootCFramePart", "hrp"}) do
+        local part = getSilentAimObjectField(sourceObject, fieldName)
+        if typeof(part) == "Instance" and part:IsA("BasePart") then
+            return part
+        end
+    end
+
+    return nil
+end
+
+function getSilentAimTargetPart(character, kind, sourceObject)
+    local container = resolveSilentAimTargetContainer(character, sourceObject)
+    if not container then
+        return nil
+    end
+
+    local partNames = getSilentAimPartOrder(kind)
+    local mappedPart = getSilentAimMappedPart(sourceObject, partNames)
+    if mappedPart then
+        return mappedPart
+    end
+
+    local namedPart = findSilentAimNamedBasePart(container, partNames)
+    if namedPart then
+        return namedPart
+    end
+
+    if container:IsA("Model") then
+        local ok, primaryPart = pcall(function()
+            return container.PrimaryPart
+        end)
+        if ok and primaryPart and primaryPart:IsA("BasePart") then
+            return primaryPart
+        end
+    end
+
+    return container:FindFirstChildWhichIsA("BasePart", true)
 end
 
 function getSilentAimPriorityOrder()
@@ -14104,25 +14282,58 @@ function getSilentAimPriorityOrder()
     return enabledOrder
 end
 
-function isSilentAimModelAlive(model, targetKind)
-    if not model or not model:IsA("Model") then
+function isSilentAimModelAlive(model, sourceObject)
+    local container = resolveSilentAimTargetContainer(model, sourceObject)
+    if typeof(container) ~= "Instance" then
         return false
     end
 
-    local humanoid = getCharacterHumanoid(model)
+    local deadAnimalsFolder = workspace:FindFirstChild("WORKSPACE_Entities")
+    deadAnimalsFolder = deadAnimalsFolder and deadAnimalsFolder:FindFirstChild("DeadAnimals")
+    if deadAnimalsFolder and container:IsDescendantOf(deadAnimalsFolder) then
+        return false
+    end
+
+    local isDead = getSilentAimObjectField(sourceObject, "IsDead")
+    if type(isDead) == "function" then
+        local ok, result = pcall(isDead, sourceObject)
+        if ok and result == true then
+            return false
+        end
+    end
+
+    local hidden = getSilentAimAttribute(sourceObject, "Hidden")
+    if hidden == true then
+        return false
+    end
+
+    local health = getSilentAimNumericValue(getSilentAimAttribute(sourceObject, "Health"))
+        or getSilentAimNumericValue(getSilentAimObjectField(sourceObject, "Health"))
+    if health and health <= 0 then
+        return false
+    end
+
+    local healthValue = container:FindFirstChild("Health")
+    local containerHealth = getSilentAimNumericValue(healthValue)
+    if containerHealth and containerHealth <= 0 then
+        return false
+    end
+
+    local humanoid = getCharacterHumanoid(container)
     if humanoid then
         return humanoid.Health > 0
     end
 
-    return getSilentAimTargetPart(model, targetKind) ~= nil
+    return getSilentAimTargetPart(container, nil, sourceObject) ~= nil
 end
 
-function buildSilentAimTargetInfo(kind, model, player)
-    if not isSilentAimModelAlive(model, kind) then
+function buildSilentAimTargetInfo(kind, model, player, sourceObject)
+    local container = resolveSilentAimTargetContainer(model, sourceObject)
+    if not isSilentAimModelAlive(container, sourceObject) then
         return nil
     end
 
-    local targetPart = getSilentAimTargetPart(model, kind)
+    local targetPart = getSilentAimTargetPart(container, kind, sourceObject)
     if not targetPart then
         return nil
     end
@@ -14130,10 +14341,85 @@ function buildSilentAimTargetInfo(kind, model, player)
     return {
         kind = kind,
         player = player,
-        character = model,
+        character = container,
+        sourceObject = sourceObject,
         part = targetPart,
         position = targetPart.Position,
     }
+end
+
+function resolveSilentAimClientNPCs(forceRefresh)
+    local globalModule = getAutoMineGlobalModule(forceRefresh)
+    if not isTable(globalModule) then
+        return nil
+    end
+
+    local clientNPCs = rawget(globalModule, "ClientNPCs") or globalModule.ClientNPCs
+    if isTable(clientNPCs) then
+        return clientNPCs
+    end
+
+    if type(globalModule.LoadModule) == "function" then
+        for _, moduleName in ipairs({"ClientNPCs", "NPCs"}) do
+            local okLoad, loadedModule = pcall(function()
+                return globalModule:LoadModule(moduleName)
+            end)
+            if okLoad and isTable(loadedModule) then
+                globalModule.ClientNPCs = loadedModule
+                return loadedModule
+            end
+        end
+    end
+
+    return nil
+end
+
+function resolveSilentAimWildLife(forceRefresh)
+    local globalModule = getAutoMineGlobalModule(forceRefresh)
+    if not isTable(globalModule) then
+        return nil
+    end
+
+    local wildLife = rawget(globalModule, "WildLife") or globalModule.WildLife
+    if isTable(wildLife) then
+        return wildLife
+    end
+
+    if type(globalModule.LoadModule) == "function" then
+        local okLoad, loadedWildLife = pcall(function()
+            return globalModule:LoadModule("WildLife")
+        end)
+        if okLoad and isTable(loadedWildLife) then
+            globalModule.WildLife = loadedWildLife
+            return loadedWildLife
+        end
+    end
+
+    return nil
+end
+
+function appendSilentAimTarget(group, seenTargets, kind, model, player, sourceObject)
+    local candidate = buildSilentAimTargetInfo(kind, model, player, sourceObject)
+    if not candidate then
+        return
+    end
+
+    if (candidate.sourceObject and seenTargets[candidate.sourceObject])
+        or (candidate.character and seenTargets[candidate.character])
+        or (candidate.part and seenTargets[candidate.part]) then
+        return
+    end
+    if candidate.sourceObject then
+        seenTargets[candidate.sourceObject] = true
+    end
+    if candidate.character then
+        seenTargets[candidate.character] = true
+    end
+    if candidate.part then
+        seenTargets[candidate.part] = true
+    end
+
+    table.insert(group, candidate)
 end
 
 function getSilentAimTargetsByPriority()
@@ -14142,13 +14428,32 @@ function getSilentAimTargetsByPriority()
         NPCs = {},
         Entities = {},
     }
+    local seenTargets = {}
 
     for _, player in ipairs(_Players:GetPlayers()) do
         if player ~= localPlayer then
             local _, character = getAliveTwwTargetData(player)
-            local candidate = buildSilentAimTargetInfo("Players", character, player)
-            if candidate then
-                table.insert(groupedTargets.Players, candidate)
+            appendSilentAimTarget(groupedTargets.Players, seenTargets, "Players", character, player, nil)
+        end
+    end
+
+    local clientNPCs = resolveSilentAimClientNPCs(false) or resolveSilentAimClientNPCs(true)
+    if isTable(clientNPCs) then
+        local npcMap = rawget(clientNPCs, "NPC_Map") or clientNPCs.NPC_Map
+        if isTable(npcMap) then
+            for _, npcObject in pairs(npcMap) do
+                if isTable(npcObject) then
+                    appendSilentAimTarget(groupedTargets.NPCs, seenTargets, "NPCs", nil, nil, npcObject)
+                end
+            end
+        end
+
+        local npcList = rawget(clientNPCs, "NPCs") or clientNPCs.NPCs
+        if isTable(npcList) then
+            for _, npcObject in pairs(npcList) do
+                if isTable(npcObject) then
+                    appendSilentAimTarget(groupedTargets.NPCs, seenTargets, "NPCs", nil, nil, npcObject)
+                end
             end
         end
     end
@@ -14157,9 +14462,19 @@ function getSilentAimTargetsByPriority()
     local npcsFolder = entitiesFolder and entitiesFolder:FindFirstChild("NPCs")
     if npcsFolder then
         for _, model in ipairs(npcsFolder:GetChildren()) do
-            local candidate = buildSilentAimTargetInfo("NPCs", model, nil)
-            if candidate then
-                table.insert(groupedTargets.NPCs, candidate)
+            appendSilentAimTarget(groupedTargets.NPCs, seenTargets, "NPCs", model, nil, nil)
+        end
+    end
+
+    local wildLife = resolveSilentAimWildLife(false) or resolveSilentAimWildLife(true)
+    if isTable(wildLife) then
+        local getWildLife = rawget(wildLife, "GetWildLife") or wildLife.GetWildLife
+        if type(getWildLife) == "function" then
+            local okWildLife, wildLifeObjects = pcall(getWildLife, wildLife)
+            if okWildLife and isTable(wildLifeObjects) then
+                for animalModel, animalObject in pairs(wildLifeObjects) do
+                    appendSilentAimTarget(groupedTargets.Entities, seenTargets, "Entities", animalModel, nil, animalObject)
+                end
             end
         end
     end
@@ -14167,10 +14482,7 @@ function getSilentAimTargetsByPriority()
     local animalsFolder = entitiesFolder and entitiesFolder:FindFirstChild("Animals")
     if animalsFolder then
         for _, model in ipairs(animalsFolder:GetChildren()) do
-            local candidate = buildSilentAimTargetInfo("Entities", model, nil)
-            if candidate then
-                table.insert(groupedTargets.Entities, candidate)
-            end
+            appendSilentAimTarget(groupedTargets.Entities, seenTargets, "Entities", model, nil, nil)
         end
     end
 
@@ -15832,13 +16144,13 @@ function getGunFovPolygonSides(shapeName)
     return 0
 end
 
-function getGunTargetSnaplineColor(targetInfo)
-    local kind = tostring(targetInfo and targetInfo.kind or "Players")
+function getGunSnaplineColor(targetInfo)
+    local kind = targetInfo and targetInfo.kind
     if kind == "NPCs" then
-        return Color3.fromRGB(190, 120, 255)
+        return Color3.fromRGB(190, 90, 255)
     end
     if kind == "Entities" then
-        return Color3.fromRGB(255, 150, 45)
+        return Color3.fromRGB(255, 145, 35)
     end
     return Color3.new(1, 1, 1)
 end
@@ -15906,7 +16218,7 @@ function updateGunAimVisuals()
     if S.gunSnaplineEnabled and targetInfo and gunFeatureState.snapline then
         gunFeatureState.snapline.From = cursor
         gunFeatureState.snapline.To = targetInfo.screenPosition
-        gunFeatureState.snapline.Color = getGunTargetSnaplineColor(targetInfo)
+        gunFeatureState.snapline.Color = getGunSnaplineColor(targetInfo)
         gunFeatureState.snapline.Visible = true
     end
 
@@ -33135,7 +33447,14 @@ function refreshDashboard()
             dashboardLabels.storage.Text = "configs: session only"
         end
     end
-    hubMain.GroupTransparency = S.guiTransparency / 100
+    local guiTransparency = S.guiTransparency / 100
+    hubMain.GroupTransparency = guiTransparency
+    if hubTiltBackdrop then
+        hubTiltBackdrop.BackgroundTransparency = guiTransparency
+    end
+    if hubTiltSidebarBackdrop then
+        hubTiltSidebarBackdrop.BackgroundTransparency = guiTransparency
+    end
 end
 
 function syncAllUi()
@@ -37508,7 +37827,14 @@ function __westwareBuildSettingsTab()
 
     createSliderRow("Transparency", elementsList, S.guiTransparency, function(value)
         S.guiTransparency = value
-        hubMain.GroupTransparency = value / 100
+        local guiTransparency = value / 100
+        hubMain.GroupTransparency = guiTransparency
+        if hubTiltBackdrop then
+            hubTiltBackdrop.BackgroundTransparency = guiTransparency
+        end
+        if hubTiltSidebarBackdrop then
+            hubTiltSidebarBackdrop.BackgroundTransparency = guiTransparency
+        end
         schedulePersist()
         refreshDashboard()
     end, function()
@@ -38124,8 +38450,10 @@ function __westwareConnectHubDragging()
             hubTargetRot = 0
         end
         hubCurrentRot = hubCurrentRot + (hubTargetRot - hubCurrentRot) * math.min(dt * 10, 1)
+        if hubTiltBackdrop then
+            hubTiltBackdrop.Rotation = hubCurrentRot
+        end
         hubWrapper.Rotation = 0
-        hubTiltGhost.Rotation = hubCurrentRot
 	end)
 end
 
