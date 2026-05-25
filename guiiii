@@ -25404,6 +25404,8 @@ HORSE_FLING_TARGET_DISTANCE = 1
 HORSE_FLING_SPIN_POWER = 20000
 HORSE_FLING_TARGET_SPIN_SPEED = 35
 HORSE_FLING_TARGET_LIFT_POWER = 20000
+HORSE_FLING_REMOTE_INTERVAL = 0.18
+HORSE_FLING_PUSH_SPEED = 95
 
 function isHorseOrbitAnimalCandidate(ridingAnimal)
 	if not isTable(ridingAnimal) or ridingAnimal.Active == false then
@@ -25545,6 +25547,28 @@ function isHorseOrbitOwnedAnimal(ridingAnimal)
 	return false
 end
 
+function isHorseOrbitServerMounted(ridingAnimal)
+	if not isHorseOrbitAnimalCandidate(ridingAnimal) then
+		return false
+	end
+
+	local rider = rawget(ridingAnimal, "Rider") or ridingAnimal.Rider
+	if isHorseOrbitLocalPlayerReference(rider) then
+		return true
+	end
+
+	local character = rawget(ridingAnimal, "character") or ridingAnimal.character
+	if typeof(character) == "Instance" then
+		local riderValue = character:FindFirstChild("Rider")
+		if riderValue and isHorseOrbitLocalPlayerReference(getHorseOrbitInstanceValue(riderValue)) then
+			return true
+		end
+	end
+
+	local wildLife = resolveHorseOrbitWildLife(false)
+	return isTable(wildLife) and (rawget(wildLife, "RidingAnimal") or wildLife.RidingAnimal) == ridingAnimal
+end
+
 function resolveHorseOrbitCandidateAnimal(forceRefresh)
 	local ridingAnimal = resolveRidingAnimal(forceRefresh)
 	if isHorseOrbitOwnedAnimal(ridingAnimal) then
@@ -25598,15 +25622,6 @@ function installHorseOrbitUnmountHook(ridingAnimal)
 		originalUnMount = originalUnMount,
 	}
 	hook.unMountWrapper = function(self, ...)
-		if playerState.horseOrbitEnabled and not playerState.horseOrbitAllowUnmount then
-			local wildLife = resolveHorseOrbitWildLife(false)
-			if isTable(wildLife) then
-				pcall(function()
-					wildLife.RidingAnimal = isTable(self) and self or ridingAnimal
-				end)
-			end
-			return nil
-		end
 		return hook.originalUnMount(self, ...)
 	end
 
@@ -25656,14 +25671,14 @@ function requestHorseOrbitMount(ridingAnimal, skipLocalMount)
 		end)
 	end
 
-	if not skipLocalMount and type(ridingAnimal.Mount) == "function" then
+	if isHorseOrbitServerMounted(ridingAnimal) and not skipLocalMount and type(ridingAnimal.Mount) == "function" then
 		pcall(function()
 			ridingAnimal:Mount()
 		end)
 	end
 
 	local wildLife = resolveHorseOrbitWildLife(false) or resolveHorseOrbitWildLife(true)
-	if isTable(wildLife) then
+	if isHorseOrbitServerMounted(ridingAnimal) and isTable(wildLife) then
 		pcall(function()
 			wildLife.RidingAnimal = ridingAnimal
 		end)
@@ -25832,6 +25847,8 @@ function findHorseFlingTargetRoot(originRoot)
 
 	local range = tonumber(HORSE_FLING_TARGET_RANGE) or 15
 	local bestRoot = nil
+	local bestCharacter = nil
+	local bestPlayer = nil
 	local bestDistance = range
 	local seenCharacters = {}
 
@@ -25850,6 +25867,8 @@ function findHorseFlingTargetRoot(originRoot)
 		if distance <= bestDistance then
 			bestDistance = distance
 			bestRoot = targetRoot
+			bestCharacter = character
+			bestPlayer = _Players:FindFirstChild(tostring(character.Name or ""))
 		end
 	end
 
@@ -25866,7 +25885,137 @@ function findHorseFlingTargetRoot(originRoot)
 		end
 	end
 
-	return bestRoot, bestDistance
+	return bestRoot, bestDistance, bestCharacter, bestPlayer
+end
+
+function resolveHorseFlingRepCharHandler(forceRefresh)
+	local globalModule = getAutoMineGlobalModule(forceRefresh)
+	if isTable(globalModule) then
+		for _, key in ipairs({ "RepCharHandler", "repCharHandler" }) do
+			local candidate = rawget(globalModule, key) or globalModule[key]
+			if isTable(candidate) and type(rawget(candidate, "GetRepChar") or candidate.GetRepChar) == "function" then
+				return candidate
+			end
+		end
+		if type(globalModule.LoadModule) == "function" then
+			local okLoad, loaded = pcall(function()
+				return globalModule:LoadModule("RepCharHandler")
+			end)
+			if okLoad and isTable(loaded) and type(rawget(loaded, "GetRepChar") or loaded.GetRepChar) == "function" then
+				globalModule.RepCharHandler = loaded
+				return loaded
+			end
+		end
+	end
+
+	local modulesTable = resolveGameModules(forceRefresh)
+	if isTable(modulesTable) then
+		for _, key in ipairs({ "RepCharHandler", "repCharHandler" }) do
+			local candidate = rawget(modulesTable, key) or modulesTable[key]
+			if isTable(candidate) and type(rawget(candidate, "GetRepChar") or candidate.GetRepChar) == "function" then
+				return candidate
+			end
+		end
+	end
+
+	return nil
+end
+
+function resolveHorseFlingTargetReference(targetRoot, targetCharacter, targetPlayer)
+	local network = resolveGlobalNetwork(false) or resolveGlobalNetwork(true)
+	if not network or type(network.GetReference) ~= "function" then
+		return nil
+	end
+
+	local handler = resolveHorseFlingRepCharHandler(false) or resolveHorseFlingRepCharHandler(true)
+	local getRepChar = isTable(handler) and (rawget(handler, "GetRepChar") or handler.GetRepChar) or nil
+	local candidates = {}
+	local function addCandidate(candidate)
+		if candidate ~= nil then
+			table.insert(candidates, candidate)
+		end
+	end
+	addCandidate(targetPlayer)
+	addCandidate(targetCharacter)
+	if targetRoot then
+		addCandidate(targetRoot.Parent)
+		if targetRoot.Parent then
+			addCandidate(targetRoot.Parent.Parent)
+		end
+	end
+
+	for _, candidate in ipairs(candidates) do
+		local repChar = nil
+		if type(getRepChar) == "function" and candidate ~= nil then
+			local okRep, result = pcall(getRepChar, handler, candidate)
+			if okRep and isTable(result) then
+				repChar = result
+			end
+		end
+		if repChar ~= nil then
+			local reference = nil
+			pcall(function()
+				reference = network:GetReference(repChar, "Character")
+			end)
+			if reference ~= nil then
+				return reference
+			end
+		end
+	end
+
+	for _, candidate in ipairs({ targetCharacter, targetRoot }) do
+		if candidate ~= nil then
+			local reference = nil
+			pcall(function()
+				reference = network:GetReference(candidate, candidate == targetRoot and "CharacterPart" or "Character")
+			end)
+			if reference ~= nil then
+				return reference
+			end
+		end
+	end
+
+	return nil
+end
+
+function fireHorseFlingRagdollRemote(ridingAnimal, horseRoot, targetRoot, targetCharacter, targetPlayer)
+	if not (isTable(ridingAnimal) and horseRoot and targetRoot) then
+		return false
+	end
+
+	local now = os.clock()
+	if now - (tonumber(playerState.horseFlingLastRemoteAt) or 0) < HORSE_FLING_REMOTE_INTERVAL then
+		return false
+	end
+	playerState.horseFlingLastRemoteAt = now
+
+	local network = resolveGlobalNetwork(false) or resolveGlobalNetwork(true)
+	if not network or type(network.FireServer) ~= "function" then
+		return false
+	end
+
+	local targetReference = resolveHorseFlingTargetReference(targetRoot, targetCharacter, targetPlayer)
+	if targetReference == nil then
+		pushDebugRateLimited("horse_fling_no_target_ref", "horse fling: target reference unavailable", 4)
+		return false
+	end
+
+	local direction = (targetRoot.Position - horseRoot.Position) * Vector3.new(1, 0, 1)
+	if direction.Magnitude > 0.001 then
+		direction = direction.Unit
+	else
+		direction = Vector3.new(horseRoot.CFrame.LookVector.X, 0, horseRoot.CFrame.LookVector.Z)
+		if direction.Magnitude > 0.001 then
+			direction = direction.Unit
+		else
+			direction = Vector3.new(0, 0, -1)
+		end
+	end
+
+	local okFire = pcall(function()
+		network:FireServer("HorseRagdollPlayer", targetReference, direction)
+	end)
+	return okFire
 end
 
 function detachHorseOrbitSeat(rootPart)
@@ -26015,45 +26164,44 @@ function applyHorseOrbitAnimalMotion(ridingAnimal, character, rootPart, dt)
 		playerState.horseOrbitLastAnimal = ridingAnimal
 	end
 
-	local dtSeconds = math.clamp(tonumber(dt) or (1 / 60), 1 / 240, 1 / 15)
-	local flingTargetRoot = findHorseFlingTargetRoot(rootPart)
-	local hasFlingTarget = flingTargetRoot ~= nil
-	local lookDirection
-	local targetCFrame
-	if hasFlingTarget then
-		local direction = flingTargetRoot.Position - horseRoot.Position
-		lookDirection = Vector3.new(direction.X, 0, direction.Z)
-		if lookDirection.Magnitude <= 0.001 then
-			lookDirection = Vector3.new(0, 0, -1)
-		end
-		lookDirection = lookDirection.Unit
-		targetCFrame = CFrame.new(flingTargetRoot.Position)
-			* CFrame.new(0, 0, HORSE_FLING_TARGET_DISTANCE)
-			* CFrame.Angles(0, os.clock() * HORSE_FLING_TARGET_SPIN_SPEED, 0)
-	else
-		local angle = ((tonumber(playerState.horseOrbitAngle) or 0) + HORSE_ORBIT_ANGULAR_SPEED * dtSeconds) % (math.pi * 2)
-		playerState.horseOrbitAngle = angle
-
-		local offset = Vector3.new(math.cos(angle) * HORSE_ORBIT_RADIUS, 0, math.sin(angle) * HORSE_ORBIT_RADIUS)
-		lookDirection = rootPart.Position - (rootPart.Position + offset)
-		lookDirection = Vector3.new(lookDirection.X, 0, lookDirection.Z)
-		if lookDirection.Magnitude <= 0.001 then
-			lookDirection = Vector3.new(0, 0, -1)
-		end
-		lookDirection = lookDirection.Unit
-
-		local targetPosition = rootPart.Position + offset
-		targetPosition = Vector3.new(targetPosition.X, getHorseOrbitTargetY(targetPosition, ridingAnimal, character, horseRoot), targetPosition.Z)
-		targetCFrame = CFrame.new(targetPosition, targetPosition + lookDirection)
+	if not isHorseOrbitServerMounted(ridingAnimal) then
+		requestHorseOrbitMount(ridingAnimal, true)
+		setHorseOrbitHorseCollisionEnabled(ridingAnimal, false)
+		return false
 	end
 
+	local flingTargetRoot, _, flingTargetCharacter, flingTargetPlayer = findHorseFlingTargetRoot(rootPart)
+	local hasFlingTarget = flingTargetRoot ~= nil
+	if not hasFlingTarget then
+		installHorseAntiRagdollHook(ridingAnimal)
+		clearHorseRagdollState(ridingAnimal)
+		setHorseOrbitHorseCollisionEnabled(ridingAnimal, false)
+		pcall(function()
+			horseRoot.AssemblyAngularVelocity = Vector3.new()
+		end)
+		return true
+	end
+
+	local direction = flingTargetRoot.Position - horseRoot.Position
+	local lookDirection = Vector3.new(direction.X, 0, direction.Z)
+	if lookDirection.Magnitude <= 0.001 then
+		lookDirection = Vector3.new(0, 0, -1)
+	end
+	lookDirection = lookDirection.Unit
+	local targetCFrame = CFrame.new(flingTargetRoot.Position)
+		* CFrame.new(0, 0, HORSE_FLING_TARGET_DISTANCE)
+		* CFrame.Angles(0, os.clock() * HORSE_FLING_TARGET_SPIN_SPEED, 0)
+	local pushVelocity = (lookDirection * HORSE_FLING_PUSH_SPEED) + Vector3.new(0, 1, 0)
+	fireHorseFlingRagdollRemote(ridingAnimal, horseRoot, flingTargetRoot, flingTargetCharacter, flingTargetPlayer)
+
 	pcall(function()
-		ridingAnimal.Movement = nil
+		ridingAnimal.Movement = Vector3.new(0, 0, -1)
 		ridingAnimal.Walking = false
 		ridingAnimal.InputReleased = nil
-		ridingAnimal.WalkSpeedGoal = 0
-		ridingAnimal.WalkSpeed = 0
-		ridingAnimal.Moving = false
+		ridingAnimal.WalkSpeedGoal = HORSE_FLING_PUSH_SPEED
+		ridingAnimal.WalkSpeed = math.max(tonumber(ridingAnimal.SprintingSpeed) or HORSE_FLING_PUSH_SPEED, HORSE_FLING_PUSH_SPEED)
+		ridingAnimal.Moving = true
+		ridingAnimal.Sprinting = true
 		ridingAnimal.Swimming = false
 		ridingAnimal.Falling = false
 		ridingAnimal.lastgrounded = true
@@ -26066,17 +26214,12 @@ function applyHorseOrbitAnimalMotion(ridingAnimal, character, rootPart, dt)
 	end
 	if type(ridingAnimal.SetMovementState) == "function" then
 		pcall(function()
-			ridingAnimal:SetMovementState("Idle")
+			ridingAnimal:SetMovementState("Sprinting")
 		end)
 	end
 	if type(ridingAnimal.SetMovementAnimationSpeed) == "function" then
 		pcall(function()
-			ridingAnimal:SetMovementAnimationSpeed(0.2)
-		end)
-	end
-	if type(ridingAnimal.DisconnectCollision) == "function" then
-		pcall(function()
-			ridingAnimal:DisconnectCollision()
+			ridingAnimal:SetMovementAnimationSpeed(1.5)
 		end)
 	end
 	installHorseAntiRagdollHook(ridingAnimal)
@@ -26087,10 +26230,10 @@ function applyHorseOrbitAnimalMotion(ridingAnimal, character, rootPart, dt)
 		horseRoot.CFrame = targetCFrame
 	end)
 	pcall(function()
-		horseRoot.AssemblyLinearVelocity = Vector3.new(0, 0.8, 0)
+		horseRoot.AssemblyLinearVelocity = pushVelocity
 	end)
 	pcall(function()
-		horseRoot.Velocity = Vector3.new(0, 0.8, 0)
+		horseRoot.Velocity = pushVelocity
 	end)
 	pcall(function()
 		horseRoot.AssemblyAngularVelocity = hasFlingTarget and Vector3.new(0, HORSE_FLING_SPIN_POWER, 0) or Vector3.new()
@@ -26113,8 +26256,8 @@ function applyHorseOrbitAnimalMotion(ridingAnimal, character, rootPart, dt)
 	local bodyVelocity = rawget(ridingAnimal, "bv") or ridingAnimal.bv
 	if bodyVelocity then
 		pcall(function()
-			bodyVelocity.MaxForce = Vector3.new()
-			bodyVelocity.Velocity = Vector3.new()
+			bodyVelocity.MaxForce = ridingAnimal.bvforce or Vector3.new(50000, 0, 50000)
+			bodyVelocity.Velocity = pushVelocity
 		end)
 	end
 
@@ -26128,7 +26271,6 @@ end
 function applyHorseOrbitPulse(dt)
 	local ridingAnimal = ensureHorseOrbitMounted()
 	if not ridingAnimal then
-		restoreHorseOrbitPlayerAttachment(false)
 		pushDebugRateLimited("horse_fling_waiting_for_horse", "horse fling: waiting for your horse", 4)
 		return false
 	end
@@ -26141,7 +26283,11 @@ function applyHorseOrbitPulse(dt)
 	end
 
 	playerState.horseOrbitWasActive = true
-	applyHorseOrbitFreePlayerState(character, rootPart, humanoid)
+	if not isHorseOrbitServerMounted(ridingAnimal) then
+		requestHorseOrbitMount(ridingAnimal, true)
+		pushDebugRateLimited("horse_fling_waiting_for_mount", "horse fling: waiting for server mount", 4)
+		return false
+	end
 	return applyHorseOrbitAnimalMotion(ridingAnimal, character, rootPart, dt)
 end
 
