@@ -20,6 +20,7 @@ local _UserInputService = game:GetService("UserInputService")
 local _SoundService = game:GetService("SoundService")
 local _HttpService = game:GetService("HttpService")
 local _CollectionService = game:GetService("CollectionService")
+local spawnNotification
 automineStartupDebug("services resolved")
 
 function resolveAutomineLocalPlayer(timeoutSeconds)
@@ -274,6 +275,7 @@ local DEFAULTS = {
     autoBreakFreeEnabled = false,
     autoGetUpEnabled = false,
     equipWhileSwimmingEnabled = false,
+    equipItemsAnywhereEnabled = false,
     infiniteOxygenEnabled = false,
     disableWaterLogicEnabled = false,
     horseInfiniteStaminaEnabled = false,
@@ -1071,6 +1073,7 @@ if type(tweenMoveSpeed) == "number" then
         if type(playerState.speedChangerValue) == "number" then
             S.speedChangerValue = math.clamp(math.floor(playerState.speedChangerValue + 0.5), 1, 100)
         end
+        S.equipItemsAnywhereEnabled = playerState.equipItemsAnywhereEnabled == true
         S.infiniteOxygenEnabled = playerState.infiniteOxygenEnabled == true
         S.disableWaterLogicEnabled = playerState.disableWaterLogicEnabled == true
         S.horseInfiniteStaminaEnabled = playerState.horseInfiniteStaminaEnabled == true
@@ -1147,6 +1150,7 @@ local function serializeState()
         autoBreakFreeEnabled = S.autoBreakFreeEnabled,
         autoGetUpEnabled = S.autoGetUpEnabled,
         equipWhileSwimmingEnabled = S.equipWhileSwimmingEnabled,
+        equipItemsAnywhereEnabled = S.equipItemsAnywhereEnabled,
         infiniteOxygenEnabled = S.infiniteOxygenEnabled,
         disableWaterLogicEnabled = S.disableWaterLogicEnabled,
         horseInfiniteStaminaEnabled = S.horseInfiniteStaminaEnabled,
@@ -1335,6 +1339,9 @@ function applySerializedState(data)
     end
     if type(data.equipWhileSwimmingEnabled) == "boolean" then
         S.equipWhileSwimmingEnabled = data.equipWhileSwimmingEnabled
+    end
+    if type(data.equipItemsAnywhereEnabled) == "boolean" then
+        S.equipItemsAnywhereEnabled = data.equipItemsAnywhereEnabled
     end
     if type(data.infiniteOxygenEnabled) == "boolean" then
         S.infiniteOxygenEnabled = data.infiniteOxygenEnabled
@@ -5607,6 +5614,55 @@ local function applyMolotovTeleportToModel(model, destCFrame)
     return ok == true
 end
 
+function getMolotovTrackedThrowEntries()
+    if type(S._molotovTrackedThrowEntries) ~= "table" then
+        S._molotovTrackedThrowEntries = setmetatable({}, {__mode = "k"})
+    end
+    return S._molotovTrackedThrowEntries
+end
+
+function trackMolotovThrowEntry(entry)
+    if not isTable(entry) then
+        return
+    end
+    getMolotovTrackedThrowEntries()[entry] = os.clock() + 3
+end
+
+function applyMolotovTeleportToEntry(entry, destCFrame)
+    if not (S.molotovTpEnabled and isTable(entry) and typeof(destCFrame) == "CFrame") then
+        return false
+    end
+
+    local model = rawget(entry, "Model") or entry.Model
+    if typeof(model) == "Instance" and model:IsA("Model") then
+        return applyMolotovTeleportToModel(model, destCFrame)
+    end
+
+    local primary = rawget(entry, "Primary") or entry.Primary
+    if typeof(primary) ~= "Instance" or not primary:IsA("BasePart") or not primary:IsDescendantOf(workspace) then
+        return false
+    end
+
+    model = getMolotovProjectileModel(primary)
+    if model then
+        return applyMolotovTeleportToModel(model, destCFrame)
+    end
+
+    local dropVelocity = tostring(S.molotovStyle or "Blatant") == "Silent"
+        and Vector3.new(0, -95, 0)
+        or Vector3.new(0, -165, 0)
+    local ok = pcall(function()
+        primary.CFrame = destCFrame
+        primary.CanCollide = true
+        primary.CanTouch = true
+        primary.CanQuery = true
+        primary.Velocity = dropVelocity
+        primary.AssemblyLinearVelocity = dropVelocity
+        primary.AssemblyAngularVelocity = Vector3.zero
+    end)
+    return ok == true
+end
+
 function applyMolotovTeleportPulse(forceFullScan)
     if not S.molotovTpEnabled then
         return false
@@ -5619,6 +5675,22 @@ function applyMolotovTeleportPulse(forceFullScan)
 
     local moved = false
     local seen = {}
+    local now = os.clock()
+    local trackedEntries = getMolotovTrackedThrowEntries()
+    local hasTrackedEntry = false
+
+    for entry, expiresAt in pairs(trackedEntries) do
+        if not isTable(entry) or (tonumber(expiresAt) or 0) <= now then
+            trackedEntries[entry] = nil
+        else
+            hasTrackedEntry = true
+            moved = applyMolotovTeleportToEntry(entry, destCFrame) or moved
+        end
+    end
+
+    if not (forceFullScan or hasTrackedEntry or (tonumber(S._molotovThrowTpUntil) or 0) > now) then
+        return moved
+    end
 
     local function tryCandidate(instance)
         local model = getMolotovProjectileModel(instance)
@@ -5651,16 +5723,12 @@ function applyMolotovTeleportPulse(forceFullScan)
 
     local playersFolder = getTwwEntityPlayersFolder()
     local localModel = playersFolder and playersFolder:FindFirstChild(localPlayer and localPlayer.Name or "")
-    scanDescendants(localModel)
+    scanChildren(localModel)
 
-    local now = os.clock()
-    local throwWindowActive = (tonumber(S._molotovThrowTpUntil) or 0) > now
-    local shouldFullScan = forceFullScan
-        or throwWindowActive
-        or (tostring(S.molotovStyle or "Blatant") ~= "Silent" and (now - (tonumber(S._molotovLastFullScanAt) or 0)) >= 0.25)
-    if shouldFullScan then
+    if forceFullScan or (now - (tonumber(S._molotovLastFullScanAt) or 0)) >= 0.25 then
         S._molotovLastFullScanAt = now
-        scanDescendants(workspace)
+        scanDescendants(ignoreFolder)
+        scanDescendants(localModel)
     end
 
     return moved
@@ -5672,7 +5740,7 @@ local function noteMolotovThrowWindow()
     end
 
     local now = os.clock()
-    S._molotovThrowTpUntil = math.max(tonumber(S._molotovThrowTpUntil) or 0, now + 2.25)
+    S._molotovThrowTpUntil = math.max(tonumber(S._molotovThrowTpUntil) or 0, now + 1.5)
     if S._molotovThrowPulseActive then
         return
     end
@@ -5681,7 +5749,7 @@ local function noteMolotovThrowWindow()
     task.spawn(function()
         while S.molotovTpEnabled and (tonumber(S._molotovThrowTpUntil) or 0) > os.clock() do
             applyMolotovTeleportPulse(true)
-            task.wait(0.025)
+            task.wait(0.05)
         end
         S._molotovThrowPulseActive = false
     end)
@@ -5699,6 +5767,9 @@ end
 function restoreMolotovTeleportHooks()
     local hooks = type(S._molotovTeleportHooks) == "table" and S._molotovTeleportHooks or nil
     if not hooks then
+        S._molotovTrackedThrowEntries = setmetatable({}, {__mode = "k"})
+        S._molotovThrowTpUntil = 0
+        S._molotovThrowPulseActive = false
         return
     end
 
@@ -5721,6 +5792,9 @@ function restoreMolotovTeleportHooks()
         end
     end
     hooks.itemHooks = setmetatable({}, {__mode = "k"})
+    S._molotovTrackedThrowEntries = setmetatable({}, {__mode = "k"})
+    S._molotovThrowTpUntil = 0
+    S._molotovThrowPulseActive = false
 end
 
 function ensureMolotovTeleportHooks()
@@ -5776,12 +5850,19 @@ function ensureMolotovTeleportHooks()
         itemHook.networkActivateWrapper = function(self, ...)
             local packedArgs = table.pack(...)
             local isThrow = tostring(packedArgs[1] or "") == "ThrowMolotov"
+            local activeEntry = isThrow and isTable(self) and (rawget(self, "ActiveMolotov") or self.ActiveMolotov) or nil
             if isThrow then
+                trackMolotovThrowEntry(activeEntry)
                 noteMolotovThrowWindow()
             end
             local results = table.pack(itemHook.originalNetworkActivate(self, table.unpack(packedArgs, 1, packedArgs.n)))
             if isThrow then
                 task.defer(function()
+                    trackMolotovThrowEntry(activeEntry)
+                    local destCFrame, targetFound = getTwwMolotovTargetCFrame()
+                    if targetFound and destCFrame then
+                        applyMolotovTeleportToEntry(activeEntry, destCFrame)
+                    end
                     applyMolotovTeleportPulse(true)
                 end)
             end
@@ -5794,9 +5875,16 @@ function ensureMolotovTeleportHooks()
     if type(throw) == "function" and throw ~= itemHook.throwWrapper then
         itemHook.originalThrow = throw
         itemHook.throwWrapper = function(self, ...)
+            local activeEntry = isTable(self) and (rawget(self, "ActiveMolotov") or self.ActiveMolotov) or nil
+            trackMolotovThrowEntry(activeEntry)
             noteMolotovThrowWindow()
             local results = table.pack(itemHook.originalThrow(self, ...))
+            trackMolotovThrowEntry(activeEntry)
             task.defer(function()
+                local destCFrame, targetFound = getTwwMolotovTargetCFrame()
+                if targetFound and destCFrame then
+                    applyMolotovTeleportToEntry(activeEntry, destCFrame)
+                end
                 applyMolotovTeleportPulse(true)
             end)
             return table.unpack(results, 1, results.n)
@@ -6494,7 +6582,7 @@ local function _removeNotification(entry)
     _repositionNotifications()
 end
 
-local function spawnNotification(message, notifType, force, duration, messageUpdater)
+function spawnNotification(message, notifType, force, duration, messageUpdater)
     if destroyed or not isSessionActive() then
         return
     end
@@ -7207,24 +7295,24 @@ task.spawn(function()
     end
 end)
 
-local activeTabName = "Home"
-local AUTOMINEBtn, AUTOMINEIndicator, AUTOMINELabel
-local clearPathVisualization
-local clearRecordedPathVisuals
-local stopAutoMine
-local refreshPathVisuals
-local refreshPathManagerButtons
-local setSavedPathDropdownOpen
-local UI_COLORS
-local ensureWorkingPathStartNode
-local getPathRecordNodeSpacing
-local setPathRecordNodeSpacing
-local getPathRecordYOffset
-local setPathRecordYOffset
-local MINE_RANGE = 7
-local PATH_RECORD_NODE_SPACING = 9
-local PATH_RECORD_Y_OFFSET = 0
-local MINE_AURA_RANGE = 15
+activeTabName = "Home"
+AUTOMINEBtn, AUTOMINEIndicator, AUTOMINELabel = nil, nil, nil
+clearPathVisualization = nil
+clearRecordedPathVisuals = nil
+stopAutoMine = nil
+refreshPathVisuals = nil
+refreshPathManagerButtons = nil
+setSavedPathDropdownOpen = nil
+UI_COLORS = nil
+ensureWorkingPathStartNode = nil
+getPathRecordNodeSpacing = nil
+setPathRecordNodeSpacing = nil
+getPathRecordYOffset = nil
+setPathRecordYOffset = nil
+MINE_RANGE = 7
+PATH_RECORD_NODE_SPACING = 9
+PATH_RECORD_Y_OFFSET = 0
+MINE_AURA_RANGE = 15
 
 function __westwareRunAutomineRuntime()
 -- Automine runtime ported from automine_gui.lua
@@ -7672,6 +7760,7 @@ playerState = {
 	autoBreakFreeEnabled = S.autoBreakFreeEnabled,
 	autoGetUpEnabled = S.autoGetUpEnabled,
 	equipWhileSwimmingEnabled = S.equipWhileSwimmingEnabled,
+	equipItemsAnywhereEnabled = S.equipItemsAnywhereEnabled,
 	infiniteOxygenEnabled = S.infiniteOxygenEnabled,
 	disableWaterLogicEnabled = S.disableWaterLogicEnabled,
 	horseInfiniteStaminaEnabled = S.horseInfiniteStaminaEnabled,
@@ -7720,6 +7809,13 @@ playerState = {
 	undergroundPreReplicateConnection = nil,
 	undergroundPreReplicateOwner = nil,
 	hookedSwimOwner = nil,
+	originalEquipAnywhereCanEquipItems = nil,
+	equipAnywhereCanEquipItemsWrapper = nil,
+	originalEquipAnywhereEquipItem = nil,
+	equipAnywhereEquipItemWrapper = nil,
+	equipAnywhereLastItemData = nil,
+	equipAnywhereLastItemKey = nil,
+	equipAnywhereRestoreUntil = 0,
 	originalSwimCanSwitchToItem = nil,
 	swimCanSwitchWrapper = nil,
 	originalSwimUpdate = nil,
@@ -7760,8 +7856,9 @@ LASSO_FAST_CHARGE_MIN_TIME = 0.05
 LASSO_TELEPORT_MAX_DISTANCE = 29
 LASSO_TELEPORT_HIT_DELAY = 0.06
 LASSO_TELEPORT_RANGE_WARNING = "Players beyond 30 studs cannot be lasso tped."
-GUN_AIM_VISUAL_TARGET_REFRESH_INTERVAL = 0.08
-LASSO_AIM_VISUAL_TARGET_REFRESH_INTERVAL = 0.1
+GUN_AIM_VISUAL_RENDER_INTERVAL = 1 / 30
+GUN_AIM_VISUAL_TARGET_REFRESH_INTERVAL = 0.18
+LASSO_AIM_VISUAL_TARGET_REFRESH_INTERVAL = 0.18
 GUN_AIM_DRAWING_KEYS = {"fovCircle", "fovSquare", "snapline", "lassoSnapline"}
 WALL_BANG_PENETRATION = 100000
 FAST_PROJECTILE_MAX_TRAVEL_TIME = 9.75
@@ -7836,6 +7933,7 @@ function applyStoredStateToRuntime()
         playerState.autoBreakFreeEnabled = S.autoBreakFreeEnabled == true
         playerState.autoGetUpEnabled = S.autoGetUpEnabled == true
         playerState.equipWhileSwimmingEnabled = S.equipWhileSwimmingEnabled == true
+        playerState.equipItemsAnywhereEnabled = S.equipItemsAnywhereEnabled == true
         playerState.infiniteOxygenEnabled = S.infiniteOxygenEnabled == true
         playerState.disableWaterLogicEnabled = S.disableWaterLogicEnabled == true
         playerState.horseInfiniteStaminaEnabled = S.horseInfiniteStaminaEnabled == true
@@ -14390,61 +14488,74 @@ function getSilentAimTargetsByPriority()
         Entities = {},
     }
     local seenTargets = {}
-
-    for _, player in ipairs(_Players:GetPlayers()) do
-        if player ~= localPlayer then
-            local _, character = getAliveTwwTargetData(player)
-            appendSilentAimTarget(groupedTargets.Players, seenTargets, "Players", character, player, nil)
-        end
+    local includePlayers = isGunTargetPriorityEnabled("Players")
+    local includeNPCs = isGunTargetPriorityEnabled("NPCs")
+    local includeEntities = isGunTargetPriorityEnabled("Entities")
+    if not includePlayers and not includeNPCs and not includeEntities then
+        includePlayers = true
     end
 
-    local clientNPCs = resolveSilentAimClientNPCs(false) or resolveSilentAimClientNPCs(true)
-    if isTable(clientNPCs) then
-        local npcMap = rawget(clientNPCs, "NPC_Map") or clientNPCs.NPC_Map
-        if isTable(npcMap) then
-            for npcModel, npcObject in pairs(npcMap) do
-                if isTable(npcObject) then
-                    local model = typeof(npcModel) == "Instance" and npcModel or nil
-                    appendSilentAimTarget(groupedTargets.NPCs, seenTargets, "NPCs", model, nil, npcObject)
-                end
-            end
-        end
-
-        local npcList = rawget(clientNPCs, "NPCs") or clientNPCs.NPCs
-        if isTable(npcList) then
-            for _, npcObject in pairs(npcList) do
-                if isTable(npcObject) then
-                    appendSilentAimTarget(groupedTargets.NPCs, seenTargets, "NPCs", nil, nil, npcObject)
-                end
+    if includePlayers then
+        for _, player in ipairs(_Players:GetPlayers()) do
+            if player ~= localPlayer then
+                local _, character = getAliveTwwTargetData(player)
+                appendSilentAimTarget(groupedTargets.Players, seenTargets, "Players", character, player, nil)
             end
         end
     end
 
-    local entitiesFolder = workspace:FindFirstChild("WORKSPACE_Entities")
-    local npcsFolder = entitiesFolder and entitiesFolder:FindFirstChild("NPCs")
-    if npcsFolder then
-        for _, model in ipairs(npcsFolder:GetChildren()) do
-            appendSilentAimTarget(groupedTargets.NPCs, seenTargets, "NPCs", model, nil, nil)
-        end
-    end
+    local entitiesFolder = (includeNPCs or includeEntities) and workspace:FindFirstChild("WORKSPACE_Entities") or nil
 
-    local wildLife = resolveSilentAimWildLife(false) or resolveSilentAimWildLife(true)
-    if isTable(wildLife) then
-        local getWildLife = rawget(wildLife, "GetWildLife") or wildLife.GetWildLife
-        if type(getWildLife) == "function" then
-            local okWildLife, wildLifeObjects = pcall(getWildLife, wildLife)
-            if okWildLife and isTable(wildLifeObjects) then
-                for animalModel, animalObject in pairs(wildLifeObjects) do
-                    appendSilentAimTarget(groupedTargets.Entities, seenTargets, "Entities", animalModel, nil, animalObject)
+    if includeNPCs then
+        local clientNPCs = resolveSilentAimClientNPCs(false) or resolveSilentAimClientNPCs(true)
+        if isTable(clientNPCs) then
+            local npcMap = rawget(clientNPCs, "NPC_Map") or clientNPCs.NPC_Map
+            if isTable(npcMap) then
+                for npcModel, npcObject in pairs(npcMap) do
+                    if isTable(npcObject) then
+                        local model = typeof(npcModel) == "Instance" and npcModel or nil
+                        appendSilentAimTarget(groupedTargets.NPCs, seenTargets, "NPCs", model, nil, npcObject)
+                    end
                 end
+            end
+
+            local npcList = rawget(clientNPCs, "NPCs") or clientNPCs.NPCs
+            if isTable(npcList) then
+                for _, npcObject in pairs(npcList) do
+                    if isTable(npcObject) then
+                        appendSilentAimTarget(groupedTargets.NPCs, seenTargets, "NPCs", nil, nil, npcObject)
+                    end
+                end
+            end
+        end
+
+        local npcsFolder = entitiesFolder and entitiesFolder:FindFirstChild("NPCs")
+        if npcsFolder then
+            for _, model in ipairs(npcsFolder:GetChildren()) do
+                appendSilentAimTarget(groupedTargets.NPCs, seenTargets, "NPCs", model, nil, nil)
             end
         end
     end
 
-    local animalsFolder = entitiesFolder and entitiesFolder:FindFirstChild("Animals")
-    if animalsFolder then
-        for _, model in ipairs(animalsFolder:GetChildren()) do
-            appendSilentAimTarget(groupedTargets.Entities, seenTargets, "Entities", model, nil, nil)
+    if includeEntities then
+        local wildLife = resolveSilentAimWildLife(false) or resolveSilentAimWildLife(true)
+        if isTable(wildLife) then
+            local getWildLife = rawget(wildLife, "GetWildLife") or wildLife.GetWildLife
+            if type(getWildLife) == "function" then
+                local okWildLife, wildLifeObjects = pcall(getWildLife, wildLife)
+                if okWildLife and isTable(wildLifeObjects) then
+                    for animalModel, animalObject in pairs(wildLifeObjects) do
+                        appendSilentAimTarget(groupedTargets.Entities, seenTargets, "Entities", animalModel, nil, animalObject)
+                    end
+                end
+            end
+        end
+
+        local animalsFolder = entitiesFolder and entitiesFolder:FindFirstChild("Animals")
+        if animalsFolder then
+            for _, model in ipairs(animalsFolder:GetChildren()) do
+                appendSilentAimTarget(groupedTargets.Entities, seenTargets, "Entities", model, nil, nil)
+            end
         end
     end
 
@@ -14507,19 +14618,19 @@ function getSilentAimTargetInfo()
     local fovRadius = math.clamp(tonumber(S.gunFovRadius) or 200, 10, 2000)
     local useFovMode = tostring(S.silentAimMode or "FOV") == "FOV"
     local groupedTargets = getSilentAimTargetsByPriority()
+    local priorityOrder = getSilentAimPriorityOrder()
     local bestTarget = nil
     local bestScore = nil
     local bestPriorityRank = math.huge
 
-    for _, priorityName in ipairs(getSilentAimPriorityOrder()) do
-        local priorityRank = getSilentAimPriorityRank(priorityName)
+    for priorityRank, priorityName in ipairs(priorityOrder) do
         for _, candidate in ipairs(groupedTargets[priorityName] or {}) do
             local targetPart = candidate.part
             local targetCharacter = candidate.character
             local worldDistance = (targetPart.Position - camera.CFrame.Position).Magnitude
             if worldDistance <= maxDistance then
                 local screenPoint, onScreen = camera:WorldToViewportPoint(targetPart.Position)
-                if onScreen and isSilentAimLineOfSightClear(targetPart, targetCharacter) then
+                if onScreen then
                     local screenVector = Vector2.new(screenPoint.X, screenPoint.Y)
                     local screenDistance = (screenVector - cursorPosition).Magnitude
                     if (not useFovMode) or screenDistance <= fovRadius then
@@ -14528,13 +14639,15 @@ function getSilentAimTargetInfo()
                             or not bestScore
                             or candidateScore < (bestScore - 0.001)
                             or (math.abs(candidateScore - bestScore) <= 0.001 and priorityRank < bestPriorityRank) then
-                            candidate.screenPosition = screenVector
-                            candidate.screenDistance = screenDistance
-                            candidate.worldDistance = worldDistance
-                            candidate.position = targetPart.Position
-                            bestTarget = candidate
-                            bestScore = candidateScore
-                            bestPriorityRank = priorityRank
+                            if isSilentAimLineOfSightClear(targetPart, targetCharacter) then
+                                candidate.screenPosition = screenVector
+                                candidate.screenDistance = screenDistance
+                                candidate.worldDistance = worldDistance
+                                candidate.position = targetPart.Position
+                                bestTarget = candidate
+                                bestScore = candidateScore
+                                bestPriorityRank = priorityRank
+                            end
                         end
                     end
                 end
@@ -16289,11 +16402,17 @@ function ensureGunAimRenderLoop()
         return
     end
 
-    gunFeatureState.renderConnection = _RunService.RenderStepped:Connect(function()
+    local visualAccumulator = 0
+    gunFeatureState.renderConnection = _RunService.RenderStepped:Connect(function(dt)
         if destroyed or not isSessionActive() or not hasGunAimVisualsEnabled() then
             clearGunAimDrawings()
             return
         end
+        visualAccumulator = visualAccumulator + (tonumber(dt) or 0.016)
+        if visualAccumulator < GUN_AIM_VISUAL_RENDER_INTERVAL then
+            return
+        end
+        visualAccumulator = 0
         updateGunAimVisuals()
     end)
 end
@@ -16301,6 +16420,12 @@ end
 function restoreEquipWhileSwimmingHooks()
     local owner = playerState.hookedSwimOwner
     if isTable(owner) then
+        if playerState.originalEquipAnywhereCanEquipItems and owner.CanEquipItems == playerState.equipAnywhereCanEquipItemsWrapper then
+            owner.CanEquipItems = playerState.originalEquipAnywhereCanEquipItems
+        end
+        if playerState.originalEquipAnywhereEquipItem and owner.EquipItem == playerState.equipAnywhereEquipItemWrapper then
+            owner.EquipItem = playerState.originalEquipAnywhereEquipItem
+        end
         if playerState.originalSwimCanSwitchToItem and owner.CanSwitchToItem == playerState.swimCanSwitchWrapper then
             owner.CanSwitchToItem = playerState.originalSwimCanSwitchToItem
         end
@@ -16323,6 +16448,13 @@ function restoreEquipWhileSwimmingHooks()
     end
 
     playerState.hookedSwimOwner = nil
+    playerState.originalEquipAnywhereCanEquipItems = nil
+    playerState.equipAnywhereCanEquipItemsWrapper = nil
+    playerState.originalEquipAnywhereEquipItem = nil
+    playerState.equipAnywhereEquipItemWrapper = nil
+    playerState.equipAnywhereLastItemData = nil
+    playerState.equipAnywhereLastItemKey = nil
+    playerState.equipAnywhereRestoreUntil = 0
     playerState.originalSwimCanSwitchToItem = nil
     playerState.swimCanSwitchWrapper = nil
     playerState.originalSwimUpdate = nil
@@ -16335,6 +16467,7 @@ end
 
 function hasWaterFeatureHooksEnabled()
     return playerState.equipWhileSwimmingEnabled
+        or playerState.equipItemsAnywhereEnabled
         or playerState.infiniteOxygenEnabled
         or playerState.disableWaterLogicEnabled
 end
@@ -16373,6 +16506,10 @@ function setInfiniteOxygenState(owner)
         pcall(function()
             rawset(owner.State, "Underwater", oxygenValue)
         end)
+    end
+
+    if type(resolveGlobalReplicatedState) ~= "function" then
+        return
     end
 
     local replicatedState = resolveGlobalReplicatedState(false) or resolveGlobalReplicatedState(true)
@@ -16489,6 +16626,185 @@ function ensureWaterSharedUtilsHook()
     end
 end
 
+function getEquipItemsAnywhereItemKey(itemData)
+    if not isTable(itemData) then
+        return nil
+    end
+    local itemType = rawget(itemData, "Type") or itemData.Type
+    local itemId = rawget(itemData, "Id") or itemData.Id
+    if type(itemId) == "string" and itemId ~= "" then
+        return itemId
+    end
+    if type(itemType) == "string" and itemType ~= "" then
+        return itemType
+    end
+    return nil
+end
+
+function isEquipItemsAnywhereFist(itemData)
+    if not isTable(itemData) then
+        return false
+    end
+    return (rawget(itemData, "Type") or itemData.Type) == "Fist"
+end
+
+function isEquipItemsAnywhereRestrictedState(owner)
+    if not isTable(owner) then
+        return false
+    end
+
+    local okSleeping, sleeping = pcall(function()
+        return type(owner.IsSleeping) == "function" and owner:IsSleeping() or false
+    end)
+    if okSleeping and sleeping then
+        return true
+    end
+
+    local state = rawget(owner, "State") or owner.State
+    if isTable(state) and (state.InTrial or state.HoldingCrate or state.FortJailed or state.InBlackMarket or (tonumber(state.RobbedCash) or 0) > 0) then
+        return true
+    end
+    if owner.Sitting or owner.Swimming or owner.IsCarrying or owner.Jailed or owner.SuperJailed then
+        return true
+    end
+
+    local globalModule = type(getAutoMineGlobalModule) == "function" and (getAutoMineGlobalModule(false) or getAutoMineGlobalModule(true)) or nil
+    if isTable(globalModule) then
+        local uiHandler = rawget(globalModule, "UIHandler") or globalModule.UIHandler
+        if isTable(uiHandler) and uiHandler.InShop then
+            return true
+        end
+        local ui = rawget(globalModule, "UI") or globalModule.UI
+        local bank = isTable(ui) and (rawget(ui, "Bank") or ui.Bank) or nil
+        if isTable(bank) and bank.Opened then
+            return true
+        end
+    end
+
+    return false
+end
+
+function rememberEquipItemsAnywhereItem(itemData)
+    if not (playerState.equipItemsAnywhereEnabled and isTable(itemData)) then
+        return
+    end
+    if isEquipItemsAnywhereFist(itemData) then
+        return
+    end
+
+    local key = getEquipItemsAnywhereItemKey(itemData)
+    if not key then
+        return
+    end
+
+    playerState.equipAnywhereLastItemData = itemData
+    playerState.equipAnywhereLastItemKey = key
+    playerState.equipAnywhereRestoreUntil = os.clock() + 4
+end
+
+function isLastEquipItemsAnywhereItem(itemData)
+    local key = getEquipItemsAnywhereItemKey(itemData)
+    return key ~= nil and key == playerState.equipAnywhereLastItemKey
+end
+
+function shouldBlockEquipItemsAnywhereForcedUnequip(owner)
+    if not playerState.equipItemsAnywhereEnabled then
+        return false
+    end
+    if not isTable(playerState.equipAnywhereLastItemData) then
+        return false
+    end
+    if os.clock() > (tonumber(playerState.equipAnywhereRestoreUntil) or 0) then
+        return false
+    end
+    return isEquipItemsAnywhereRestrictedState(owner)
+end
+
+function getEquipItemsAnywhereCanSwitchResult(self, itemData)
+    if not (playerState.equipItemsAnywhereEnabled and isTable(self) and isTable(itemData)) then
+        return nil
+    end
+
+    local itemType = rawget(itemData, "Type") or itemData.Type
+    if itemType == "Fist" then
+        return true
+    end
+    if type(itemType) ~= "string" then
+        return nil
+    end
+
+    local getItem = rawget(self, "GetItem") or self.GetItem
+    if type(getItem) ~= "function" then
+        return nil
+    end
+    local okItem, itemObject = pcall(getItem, self, itemType)
+    if not okItem or not isTable(itemObject) then
+        return nil
+    end
+    if not isTable(rawget(itemObject, "SharedData") or itemObject.SharedData) then
+        return nil
+    end
+
+    if isLastEquipItemsAnywhereItem(itemData) then
+        return true
+    end
+
+    if type(resolveGlobalReplicatedState) ~= "function" or type(resolvePlayerDataModule) ~= "function" then
+        return nil
+    end
+
+    local replicatedState = resolveGlobalReplicatedState(false) or resolveGlobalReplicatedState(true)
+    local state = isTable(replicatedState) and (rawget(replicatedState, "State") or replicatedState.State) or nil
+    local recentlyAdded = isTable(state) and (rawget(state, "RecentlyAddedToLoadout") or state.RecentlyAddedToLoadout) or nil
+    if isTable(recentlyAdded) and next(recentlyAdded) ~= nil then
+        return false
+    end
+
+    local playerData = resolvePlayerDataModule(false) or resolvePlayerDataModule(true)
+    if not isTable(playerData) then
+        return nil
+    end
+
+    local isItemTypeLocked = rawget(playerData, "IsItemTypeLocked") or playerData.IsItemTypeLocked
+    if type(isItemTypeLocked) == "function" then
+        local okLocked, locked = pcall(isItemTypeLocked, playerData, itemType)
+        if okLocked and locked then
+            return false
+        elseif not okLocked then
+            return nil
+        end
+    end
+
+    local isDefaultItem = rawget(itemData, "IsDefaultItem") or itemData.IsDefaultItem
+    if not isDefaultItem then
+        local itemId = rawget(itemData, "Id") or itemData.Id
+        local loadoutContains = rawget(playerData, "LoadoutContains") or playerData.LoadoutContains
+        if type(loadoutContains) ~= "function" then
+            return nil
+        end
+        local okContains, contains = pcall(loadoutContains, playerData, itemId)
+        if not okContains then
+            return nil
+        end
+        if not contains then
+            return false
+        end
+    end
+
+    local defaultItems = rawget(self, "DefaultItems") or self.DefaultItems
+    if isTable(defaultItems) then
+        if itemData == defaultItems.SuperJailPickaxe and not self.SuperJailed then
+            return false
+        end
+        local charState = rawget(self, "State") or self.State
+        if itemData == defaultItems.Harmonica and not (isTable(charState) and charState.FortJailed) then
+            return false
+        end
+    end
+
+    return true
+end
+
 function ensureEquipWhileSwimmingHooks()
     if not hasWaterFeatureHooksEnabled() then
         return
@@ -16503,14 +16819,46 @@ function ensureEquipWhileSwimmingHooks()
         playerState.hookedSwimOwner = owner
     end
 
+    local canEquipItems = rawget(owner, "CanEquipItems") or owner.CanEquipItems
+    if type(canEquipItems) == "function" and canEquipItems ~= playerState.equipAnywhereCanEquipItemsWrapper then
+        playerState.originalEquipAnywhereCanEquipItems = canEquipItems
+        playerState.equipAnywhereCanEquipItemsWrapper = function(self, ...)
+            if playerState.equipItemsAnywhereEnabled and type(self) == "table" then
+                return true, nil
+            end
+            return playerState.originalEquipAnywhereCanEquipItems(self, ...)
+        end
+        owner.CanEquipItems = playerState.equipAnywhereCanEquipItemsWrapper
+    end
+
+    local equipItem = rawget(owner, "EquipItem") or owner.EquipItem
+    if type(equipItem) == "function" and equipItem ~= playerState.equipAnywhereEquipItemWrapper then
+        playerState.originalEquipAnywhereEquipItem = equipItem
+        playerState.equipAnywhereEquipItemWrapper = function(self, itemData, ...)
+            if playerState.equipItemsAnywhereEnabled and type(self) == "table" then
+                if isTable(itemData) and not isEquipItemsAnywhereFist(itemData) then
+                    rememberEquipItemsAnywhereItem(itemData)
+                elseif (itemData == nil or isEquipItemsAnywhereFist(itemData)) and shouldBlockEquipItemsAnywhereForcedUnequip(self) then
+                    return
+                end
+            end
+            return playerState.originalEquipAnywhereEquipItem(self, itemData, ...)
+        end
+        owner.EquipItem = playerState.equipAnywhereEquipItemWrapper
+    end
+
     local canSwitch = rawget(owner, "CanSwitchToItem") or owner.CanSwitchToItem
     if type(canSwitch) == "function" and canSwitch ~= playerState.swimCanSwitchWrapper then
         playerState.originalSwimCanSwitchToItem = canSwitch
-        playerState.swimCanSwitchWrapper = function(self, ...)
+        playerState.swimCanSwitchWrapper = function(self, itemData, ...)
+            local equipAnywhereResult = getEquipItemsAnywhereCanSwitchResult(self, itemData)
+            if equipAnywhereResult ~= nil then
+                return equipAnywhereResult
+            end
             if (playerState.equipWhileSwimmingEnabled or playerState.disableWaterLogicEnabled) and type(self) == "table" then
                 self.Swimming = false
             end
-            return playerState.originalSwimCanSwitchToItem(self, ...)
+            return playerState.originalSwimCanSwitchToItem(self, itemData, ...)
         end
         owner.CanSwitchToItem = playerState.swimCanSwitchWrapper
     end
@@ -26396,6 +26744,7 @@ function hasPlayerStateFeatureHooksEnabled()
 		or playerState.horseAntiRagdollEnabled
 		or playerState.horseOrbitEnabled
         or playerState.equipWhileSwimmingEnabled
+        or playerState.equipItemsAnywhereEnabled
         or hasGunFeatureHooksEnabled()
 end
 
@@ -31350,6 +31699,7 @@ setNoRagdollEnabled = makePlayerFeatureSetter("noRagdollEnabled", "no ragdoll")
 setAutoBreakFreeEnabled = makePlayerFeatureSetter("autoBreakFreeEnabled", "auto break free")
 setAutoGetUpEnabled = makePlayerFeatureSetter("autoGetUpEnabled", "auto get up")
 setEquipWhileSwimmingEnabled = makePlayerFeatureSetter("equipWhileSwimmingEnabled", "equip while swimming")
+setEquipItemsAnywhereEnabled = makePlayerFeatureSetter("equipItemsAnywhereEnabled", "equip items anywhere")
 setInfiniteOxygenEnabled = makePlayerFeatureSetter("infiniteOxygenEnabled", "infinite oxygen")
 setDisableWaterLogicEnabled = makePlayerFeatureSetter("disableWaterLogicEnabled", "disable water logic")
 setSilentAimEnabled = makeSFeatureSetter("silentAimEnabled", "silent aim")
@@ -37758,6 +38108,8 @@ function __westwareBuildGameTab()
     local safeTeleportRow, _, safeTeleportSync = createBoundToggleRow("Safe Teleport", elementsList, playerState, "safeTeleportEnabled", setSafeTeleportEnabled)
     playerUi.safeTeleportButton = safeTeleportRow
     playerUi.safeTeleportSync = safeTeleportSync
+
+    createBoundToggleRow("Equip items anywhere", elementsList, playerState, "equipItemsAnywhereEnabled", setEquipItemsAnywhereEnabled)
 
     createToggleRow("Notify if Staff Present", elementsList, function()
         return S.staffNotifyEnabled
