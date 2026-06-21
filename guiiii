@@ -918,11 +918,6 @@ local DEFAULTS = {
     cframeFlyOffset = 5,
     cframeFlyAngle = 0,
     undergroundDepthOffset = 1,
-    undergroundAngle = 0,
-    undergroundLayAngle = 90,
-    undergroundRollFramePercent = 45,
-    undergroundRollMode = "Controlled Underground",
-    undergroundRollTrack = "FrontRollNew",
     autoPickupEnabled = false,
     autoPickupWhitelistEnabled = false,
     selectedOreNames = {Coal = true},
@@ -1060,31 +1055,6 @@ function findCaseInsensitiveOption(value, optionOrder)
 end
 function normalizeHorseFlingTargetPart(value)
     return findCaseInsensitiveOption(value or DEFAULTS.horseFlingTargetPart, HORSE_FLING_TARGET_PART_OPTIONS) or DEFAULTS.horseFlingTargetPart
-end
-local UNDERGROUND_ROLL_MODE_OPTIONS = { "Controlled Underground" }
-local UNDERGROUND_ROLL_TRACK_OPTIONS = {"FrontRollNew", "FrontRoll", "FrontFallNew", "FrontFall", "FrontFallOld", "FrontFallOld2", "FrontFallOld3", "BackRoll", "LeftRoll", "RightRoll", "SideStepLeft", "SideStepRight"}
-function normalizeSerializedMovementMode(value)
-    local candidate = string.lower(tostring(value or DEFAULTS.movementMode or "cframe")):gsub("%s+", "")
-    if candidate == "cframe" or candidate == "cframefly" or candidate == "underground" then
-        return candidate
-    end
-    return "cframe"
-end
-function normalizeUndergroundRollMode(value)
-    local lowered = string.lower(tostring(value or DEFAULTS.undergroundRollMode or "Controlled Underground")):gsub("%s+", "")
-    if lowered == "controlledunderground" or lowered == "controlled" or lowered == "controlledragdoll" then
-        return "Controlled Underground"
-    end
-    return "Controlled Underground"
-end
-function normalizeUndergroundRollTrack(value)
-    local lowered = string.lower(tostring(value or DEFAULTS.undergroundRollTrack or "FrontRollNew")):gsub("%s+", "")
-    for _, optionName in ipairs(UNDERGROUND_ROLL_TRACK_OPTIONS) do
-        if lowered == string.lower(optionName):gsub("%s+", "") then
-            return optionName
-        end
-    end
-    return DEFAULTS.undergroundRollTrack or "FrontRollNew"
 end
 function normalizePathPlayerAvoiderMethod(value)
     return findCaseInsensitiveOption(value or DEFAULTS.pathPlayerAvoiderMethod, PATH_PLAYER_AVOIDER_METHOD_ORDER)
@@ -1560,21 +1530,6 @@ if type(tweenMoveSpeed) == "number" then
     if type(undergroundDepthOffset) == "number" then
         S.undergroundDepthOffset = math.clamp(math.floor((undergroundDepthOffset * 10) + 0.5) / 10, UNDERGROUND_DEPTH_OFFSET_MIN or 0, UNDERGROUND_DEPTH_OFFSET_MAX or 5)
     end
-    if type(undergroundAngle) == "number" then
-        S.undergroundAngle = math.clamp(math.floor(undergroundAngle + 0.5), 0, 360)
-    end
-    if type(undergroundLayAngle) == "number" then
-        S.undergroundLayAngle = math.clamp(math.floor(undergroundLayAngle + 0.5), -180, 180)
-    end
-    if type(undergroundRollFramePercent) == "number" then
-        S.undergroundRollFramePercent = math.clamp(math.floor(undergroundRollFramePercent + 0.5), 0, 100)
-    end
-    if type(undergroundRollMode) == "string" then
-        S.undergroundRollMode = normalizeUndergroundRollMode(undergroundRollMode)
-    end
-    if type(undergroundRollTrack) == "string" then
-        S.undergroundRollTrack = normalizeUndergroundRollTrack(undergroundRollTrack)
-    end
     if type(playerState) == "table" then
         S.speedChangerEnabled = playerState.speedChangerEnabled == true
         if type(playerState.speedChangerValue) == "number" then
@@ -1809,11 +1764,6 @@ local SETTING_SPECS = {
     {key = "undergroundDepthOffset", valueType = "number", normalize = function(value)
         return roundClampedNumber(value, UNDERGROUND_DEPTH_OFFSET_MIN or 0, UNDERGROUND_DEPTH_OFFSET_MAX or 5, 1)
     end},
-    {key = "undergroundAngle", valueType = "number", normalize = makeNumberNormalizer(0, 360)},
-    {key = "undergroundLayAngle", valueType = "number", normalize = makeNumberNormalizer(-180, 180)},
-    {key = "undergroundRollFramePercent", valueType = "number", normalize = makeNumberNormalizer(0, 100)},
-    {key = "undergroundRollMode", valueType = "string", normalize = normalizeUndergroundRollMode},
-    {key = "undergroundRollTrack", valueType = "string", normalize = normalizeUndergroundRollTrack},
     {key = "selectedOreNames", serialize = function()
         return cloneBooleanMap(S.selectedOreNames)
     end, apply = function(value)
@@ -6142,14 +6092,8 @@ CFRAME_FLY_OFFSET_MAX = 10
 CFRAME_FLY_ANGLE_MIN = 0
 CFRAME_FLY_ANGLE_MAX = 360
 UNDERGROUND_SPEED_MAX = 150
-UNDERGROUND_ANGLE_MIN = 0
-UNDERGROUND_ANGLE_MAX = 360
-UNDERGROUND_LAY_ANGLE_MIN = -180
-UNDERGROUND_LAY_ANGLE_MAX = 180
 UNDERGROUND_DEPTH_OFFSET_MIN = 0
 UNDERGROUND_DEPTH_OFFSET_MAX = 10
-UNDERGROUND_ROLL_FRAME_MIN = 0
-UNDERGROUND_ROLL_FRAME_MAX = 100
 MINE_AURA_MULTIPLIER = 1.0
 TWEEN_GROUND_SCAN_HEIGHT = 30
 TWEEN_GROUND_CLEARANCE = 3.5
@@ -6367,11 +6311,6 @@ tweenMoveSpeed = TWEEN_MOVE_SPEED
 cframeFlyOffset = DEFAULTS.cframeFlyOffset
 cframeFlyAngle = DEFAULTS.cframeFlyAngle
 undergroundDepthOffset = DEFAULTS.undergroundDepthOffset
-undergroundAngle = DEFAULTS.undergroundAngle
-undergroundLayAngle = DEFAULTS.undergroundLayAngle
-undergroundRollFramePercent = DEFAULTS.undergroundRollFramePercent
-undergroundRollMode = DEFAULTS.undergroundRollMode
-undergroundRollTrack = DEFAULTS.undergroundRollTrack
 auraOriginalParts = {}
 autoMineLockedControls = nil
 autoMineLockedHumanoid = nil
@@ -6685,11 +6624,6 @@ S.tweenMoveSpeed = math.clamp(math.floor(((tonumber(S.tweenMoveSpeed) or DEFAULT
 	S.cframeFlyOffset = math.clamp(math.floor((tonumber(S.cframeFlyOffset) or DEFAULTS.cframeFlyOffset) + 0.5), 1, 10)
 	S.cframeFlyAngle = math.clamp(math.floor((tonumber(S.cframeFlyAngle) or DEFAULTS.cframeFlyAngle) + 0.5), 0, 360)
 	S.undergroundDepthOffset = math.clamp(math.floor(((tonumber(S.undergroundDepthOffset) or DEFAULTS.undergroundDepthOffset) * 10) + 0.5) / 10, UNDERGROUND_DEPTH_OFFSET_MIN, UNDERGROUND_DEPTH_OFFSET_MAX)
-	S.undergroundAngle = math.clamp(math.floor((tonumber(S.undergroundAngle) or DEFAULTS.undergroundAngle) + 0.5), UNDERGROUND_ANGLE_MIN, UNDERGROUND_ANGLE_MAX)
-	S.undergroundLayAngle = math.clamp(math.floor((tonumber(S.undergroundLayAngle) or DEFAULTS.undergroundLayAngle) + 0.5), UNDERGROUND_LAY_ANGLE_MIN, UNDERGROUND_LAY_ANGLE_MAX)
-	S.undergroundRollFramePercent = math.clamp(math.floor((tonumber(S.undergroundRollFramePercent) or DEFAULTS.undergroundRollFramePercent) + 0.5), UNDERGROUND_ROLL_FRAME_MIN, UNDERGROUND_ROLL_FRAME_MAX)
-	S.undergroundRollMode = normalizeUndergroundRollMode(S.undergroundRollMode)
-	S.undergroundRollTrack = normalizeUndergroundRollTrack(S.undergroundRollTrack)
 	S.selectedOreNames = cloneBooleanMap(S.selectedOreNames)
 	S.selectedPickupNames = cloneBooleanMap(S.selectedPickupNames)
 	S.autoSellThreshold = math.clamp(math.floor((tonumber(S.autoSellThreshold) or DEFAULTS.autoSellThreshold) + 0.5), 0, 100)
@@ -6746,31 +6680,6 @@ S.tweenMoveSpeed = math.clamp(math.floor(((tonumber(S.tweenMoveSpeed) or DEFAULT
 			setUndergroundDepthOffset(S.undergroundDepthOffset, true)
 		else
 			undergroundDepthOffset = S.undergroundDepthOffset
-		end
-		if type(setUndergroundAngle) == "function" then
-			setUndergroundAngle(S.undergroundAngle, true)
-		else
-			undergroundAngle = S.undergroundAngle
-		end
-		if type(setUndergroundLayAngle) == "function" then
-			setUndergroundLayAngle(S.undergroundLayAngle, true)
-		else
-			undergroundLayAngle = S.undergroundLayAngle
-		end
-		if type(setUndergroundRollFramePercent) == "function" then
-			setUndergroundRollFramePercent(S.undergroundRollFramePercent, true)
-		else
-			undergroundRollFramePercent = S.undergroundRollFramePercent
-		end
-		if type(setUndergroundRollMode) == "function" then
-			setUndergroundRollMode(S.undergroundRollMode, true)
-		else
-			undergroundRollMode = S.undergroundRollMode
-		end
-		if type(setUndergroundRollTrack) == "function" then
-			setUndergroundRollTrack(S.undergroundRollTrack, true)
-		else
-			undergroundRollTrack = S.undergroundRollTrack
 		end
 		autoPickupEnabled = S.autoPickupEnabled
 		autoPickupWhitelistEnabled = S.autoPickupWhitelistEnabled
@@ -9362,14 +9271,6 @@ function clampCFrameFlyAngle(value) return math.clamp(math.floor((tonumber(value
 function getCFrameFlyAngle() return clampCFrameFlyAngle(cframeFlyAngle) end
 function clampUndergroundDepthOffset(value) return math.clamp(math.floor(((tonumber(value) or DEFAULTS.undergroundDepthOffset) * 10) + 0.5) / 10, UNDERGROUND_DEPTH_OFFSET_MIN, UNDERGROUND_DEPTH_OFFSET_MAX) end
 function getUndergroundDepthOffset() return clampUndergroundDepthOffset(undergroundDepthOffset) end
-function clampUndergroundAngle(value) return math.clamp(math.floor((tonumber(value) or DEFAULTS.undergroundAngle) + 0.5), UNDERGROUND_ANGLE_MIN, UNDERGROUND_ANGLE_MAX) end
-function getUndergroundAngle() return clampUndergroundAngle(undergroundAngle) end
-function clampUndergroundLayAngle(value) return math.clamp(math.floor((tonumber(value) or DEFAULTS.undergroundLayAngle) + 0.5), UNDERGROUND_LAY_ANGLE_MIN, UNDERGROUND_LAY_ANGLE_MAX) end
-function getUndergroundLayAngle() return clampUndergroundLayAngle(undergroundLayAngle) end
-function clampUndergroundRollFramePercent(value) return math.clamp(math.floor((tonumber(value) or DEFAULTS.undergroundRollFramePercent) + 0.5), UNDERGROUND_ROLL_FRAME_MIN, UNDERGROUND_ROLL_FRAME_MAX) end
-function getUndergroundRollFramePercent() return clampUndergroundRollFramePercent(undergroundRollFramePercent) end
-function getUndergroundRollMode() return normalizeUndergroundRollMode(undergroundRollMode) end
-function getUndergroundRollTrack() return normalizeUndergroundRollTrack(undergroundRollTrack) end
 function isCFrameMovementMode(value)
 	local normalizedValue = safeLower(value):gsub("%s+", "")
 	return normalizedValue == "cframe" or normalizedValue == "cframefly"
@@ -9433,68 +9334,6 @@ function setUndergroundDepthOffset(value, skipPersistence)
 	end
 	if changed and type(syncUndergroundOrientationState) == "function" then
 		pcall(syncUndergroundOrientationState, cachedCharacter)
-	end
-	persistPathSettingIfChanged(changed, skipPersistence)
-end
-function setUndergroundAngle(value, skipPersistence)
-	local nextValue = clampUndergroundAngle(value)
-	local changed = math.abs((tonumber(undergroundAngle) or DEFAULTS.undergroundAngle) - nextValue) > 0.001
-	undergroundAngle = nextValue
-	S.undergroundAngle = nextValue
-	if undergroundFrameBox then
-		undergroundFrameBox.Text = tostring(nextValue)
-	end
-	if pathUi and pathUi.undergroundAngleUpdate then
-		pcall(pathUi.undergroundAngleUpdate, nextValue, true)
-	end
-	if changed and type(syncUndergroundOrientationState) == "function" then
-		pcall(syncUndergroundOrientationState, cachedCharacter)
-	end
-	persistPathSettingIfChanged(changed, skipPersistence)
-end
-function setUndergroundLayAngle(value, skipPersistence)
-	local nextValue = clampUndergroundLayAngle(value)
-	local changed = math.abs((tonumber(undergroundLayAngle) or DEFAULTS.undergroundLayAngle) - nextValue) > 0.001
-	undergroundLayAngle = nextValue
-	S.undergroundLayAngle = nextValue
-	if pathUi and pathUi.undergroundLayAngleUpdate then
-		pcall(pathUi.undergroundLayAngleUpdate, nextValue, true)
-	end
-	if changed and type(syncUndergroundOrientationState) == "function" then
-		pcall(syncUndergroundOrientationState, cachedCharacter)
-	end
-	persistPathSettingIfChanged(changed, skipPersistence)
-end
-function setUndergroundRollFramePercent(value, skipPersistence)
-	local nextValue = clampUndergroundRollFramePercent(value)
-	local changed = math.abs((tonumber(undergroundRollFramePercent) or DEFAULTS.undergroundRollFramePercent) - nextValue) > 0.001
-	undergroundRollFramePercent = nextValue
-	S.undergroundRollFramePercent = nextValue
-	persistPathSettingIfChanged(changed, skipPersistence)
-end
-function setUndergroundRollMode(value, skipPersistence)
-	local nextValue = normalizeUndergroundRollMode(value)
-	local changed = getUndergroundRollMode() ~= nextValue
-	undergroundRollMode = nextValue
-	S.undergroundRollMode = nextValue
-	if pathUi and pathUi.undergroundRollModeSync then
-		pcall(pathUi.undergroundRollModeSync)
-	end
-	if changed then
-		endUndergroundTravel(cachedCharacter)
-	end
-	persistPathSettingIfChanged(changed, skipPersistence)
-end
-function setUndergroundRollTrack(value, skipPersistence)
-	local nextValue = normalizeUndergroundRollTrack(value)
-	local changed = getUndergroundRollTrack() ~= nextValue
-	undergroundRollTrack = nextValue
-	S.undergroundRollTrack = nextValue
-	if pathUi and pathUi.undergroundRollTrackSync then
-		pcall(pathUi.undergroundRollTrackSync)
-	end
-	if changed then
-		endUndergroundTravel(cachedCharacter)
 	end
 	persistPathSettingIfChanged(changed, skipPersistence)
 end
@@ -9611,16 +9450,6 @@ function getUndergroundTravelDirection(rootPart, flatDirection)
 	end
 	return Vector3.new(0, 0, -1)
 end
-function getUndergroundTravelRotation(rootPart, flatDirection)
-	local direction = getUndergroundTravelDirection(rootPart, flatDirection)
-	local yawAngle = getUndergroundAngle()
-	if math.abs(yawAngle) > 0.001 then
-		direction = normalizeUndergroundFlatDirection(CFrame.Angles(0, math.rad(yawAngle), 0):VectorToWorldSpace(direction)) or direction
-	end
-	return CFrame.lookAt(Vector3.new(0, 0, 0), direction, Vector3.new(0, 1, 0))
-		* CFrame.Angles(0, 0, math.rad(getUndergroundLayAngle()))
-end
-function getUndergroundGoalCFrame(position, rootPart, flatDirection) return CFrame.new(position) * getUndergroundTravelRotation(rootPart, flatDirection) end
 function getUndergroundPathReachDistance() return math.max(4.75, WAYPOINT_REACH_DISTANCE * 0.85) end
 function getUndergroundVerticalReachDistance(wantedRange)
 	local baseRange = math.max(0.2, tonumber(wantedRange) or getUndergroundPathReachDistance())
@@ -10472,7 +10301,7 @@ function savePathsToStorage(showNotice)
 	local payload = {
 		version = 5,
 		sharedPathFolder = PATH_STORAGE_FOLDER,
-		settings = {selectedPathName = pathState.selectedPathName, pathSlots = serializedPathSlots, pathSectionCount = pathState.pathSectionCount, focusedPathSlotIndex = pathState.focusedPathSlotIndex, sequenceStartSlotIndex = pathState.sequenceStartSlotIndex, alwaysPlayEnabled = pathState.alwaysPlayEnabled, farmPathsEnabled = pathState.farmPathsEnabled == true, staffHopEnabled = pathState.staffHopEnabled == true, smartStaffDetectionEnabled = pathState.smartStaffDetectionEnabled == true, playerAvoiderEnabled = pathState.playerAvoiderEnabled == true, playerAvoiderDistance = getPathPlayerAvoiderDistance(), playerAvoiderShowCorridor = pathState.playerAvoiderShowCorridor == true, playerAvoiderMethod = getPathPlayerAvoiderMethod(), playerAvoiderMethods = getPathPlayerAvoiderMethods(), playerAvoiderAction = getPathPlayerAvoiderAction(), playerAvoiderRadius = getPathPlayerAvoiderRadius(), playerAvoiderShowRadius = pathState.playerAvoiderShowRadius ~= false, bearPreventionEnabled = pathState.bearPreventionEnabled == true, hopOnDeathEnabled = pathState.hopOnDeathEnabled == true, hopTimePassEnabled = pathState.hopTimePassEnabled == true, hopTimePassMinutes = getPathHopTimePassMinutes(), orePurityHopEnabled = isPathOrePurityHopEnabled(), orePurityHopPercent = getPathOrePurityHopPercent(), stayGroundedEnabled = isPathStayGroundedEnabled(), playLoopEnabled = false, resumePathPlaybackPending = pathState.resumePathPlaybackPending == true, markOreKey = pathState.markOreKey and pathState.markOreKey.Name or DEFAULT_AUTOFARM_KEY.Name, recordNodeSpacing = getPathRecordNodeSpacing(), recordYOffset = getPathRecordYOffset(), movementMode = normalizeMovementMode(movementMode), tweenMoveSpeed = clampTweenSpeed(tweenMoveSpeed), cframeFlyOffset = getCFrameFlyOffset(), cframeFlyAngle = getCFrameFlyAngle(), undergroundDepthOffset = getUndergroundDepthOffset(), undergroundAngle = getUndergroundAngle(), undergroundLayAngle = getUndergroundLayAngle(), undergroundRollFramePercent = getUndergroundRollFramePercent(), undergroundRollMode = getUndergroundRollMode(), undergroundRollTrack = getUndergroundRollTrack(), serverHopEnabled = serverHopEnabled == true,},
+		settings = {selectedPathName = pathState.selectedPathName, pathSlots = serializedPathSlots, pathSectionCount = pathState.pathSectionCount, focusedPathSlotIndex = pathState.focusedPathSlotIndex, sequenceStartSlotIndex = pathState.sequenceStartSlotIndex, alwaysPlayEnabled = pathState.alwaysPlayEnabled, farmPathsEnabled = pathState.farmPathsEnabled == true, staffHopEnabled = pathState.staffHopEnabled == true, smartStaffDetectionEnabled = pathState.smartStaffDetectionEnabled == true, playerAvoiderEnabled = pathState.playerAvoiderEnabled == true, playerAvoiderDistance = getPathPlayerAvoiderDistance(), playerAvoiderShowCorridor = pathState.playerAvoiderShowCorridor == true, playerAvoiderMethod = getPathPlayerAvoiderMethod(), playerAvoiderMethods = getPathPlayerAvoiderMethods(), playerAvoiderAction = getPathPlayerAvoiderAction(), playerAvoiderRadius = getPathPlayerAvoiderRadius(), playerAvoiderShowRadius = pathState.playerAvoiderShowRadius ~= false, bearPreventionEnabled = pathState.bearPreventionEnabled == true, hopOnDeathEnabled = pathState.hopOnDeathEnabled == true, hopTimePassEnabled = pathState.hopTimePassEnabled == true, hopTimePassMinutes = getPathHopTimePassMinutes(), orePurityHopEnabled = isPathOrePurityHopEnabled(), orePurityHopPercent = getPathOrePurityHopPercent(), stayGroundedEnabled = isPathStayGroundedEnabled(), playLoopEnabled = false, resumePathPlaybackPending = pathState.resumePathPlaybackPending == true, markOreKey = pathState.markOreKey and pathState.markOreKey.Name or DEFAULT_AUTOFARM_KEY.Name, recordNodeSpacing = getPathRecordNodeSpacing(), recordYOffset = getPathRecordYOffset(), movementMode = normalizeMovementMode(movementMode), tweenMoveSpeed = clampTweenSpeed(tweenMoveSpeed), cframeFlyOffset = getCFrameFlyOffset(), cframeFlyAngle = getCFrameFlyAngle(), undergroundDepthOffset = getUndergroundDepthOffset(), serverHopEnabled = serverHopEnabled == true,},
 		paths = serializedPaths,
 	}
 	local makefolderFunction = getCallableGlobal("makefolder")
@@ -10586,21 +10415,6 @@ function loadPathsFromStorage()
 	if type(settings.undergroundDepthOffset) == "number" and not preferRuntimeConfigAutomineSettings then
 		setUndergroundDepthOffset(settings.undergroundDepthOffset, true)
 	end
-	if type(settings.undergroundAngle) == "number" and not preferRuntimeConfigAutomineSettings then
-		setUndergroundAngle(settings.undergroundAngle, true)
-	end
-	if type(settings.undergroundLayAngle) == "number" and not preferRuntimeConfigAutomineSettings then
-		setUndergroundLayAngle(settings.undergroundLayAngle, true)
-	end
-	if type(settings.undergroundRollFramePercent) == "number" and not preferRuntimeConfigAutomineSettings then
-		setUndergroundRollFramePercent(settings.undergroundRollFramePercent, true)
-	end
-	if type(settings.undergroundRollMode) == "string" and not preferRuntimeConfigAutomineSettings then
-		setUndergroundRollMode(settings.undergroundRollMode, true)
-	end
-	if type(settings.undergroundRollTrack) == "string" and not preferRuntimeConfigAutomineSettings then
-		setUndergroundRollTrack(settings.undergroundRollTrack, true)
-	end
 	if isTable(settings.pathSlots) then
 		for slotIndex = 1, MAX_PATH_PLAYBACK_SLOTS do
 			local slotName = settings.pathSlots[slotIndex]
@@ -10696,11 +10510,6 @@ function loadPathsFromStorage()
 		setCFrameFlyOffset(S.cframeFlyOffset, true)
 		setCFrameFlyAngle(S.cframeFlyAngle, true)
 		setUndergroundDepthOffset(S.undergroundDepthOffset, true)
-		setUndergroundAngle(S.undergroundAngle, true)
-		setUndergroundLayAngle(S.undergroundLayAngle, true)
-		setUndergroundRollFramePercent(S.undergroundRollFramePercent, true)
-		setUndergroundRollMode(S.undergroundRollMode, true)
-		setUndergroundRollTrack(S.undergroundRollTrack, true)
 		serverHopEnabled = S.serverHopEnabled == true
 	else
 		serverHopEnabled = settings.serverHopEnabled == true
@@ -10710,11 +10519,6 @@ S.tweenMoveSpeed = math.clamp(math.floor(((tonumber(tweenMoveSpeed) or DEFAULTS.
 		S.cframeFlyOffset = getCFrameFlyOffset()
 		S.cframeFlyAngle = getCFrameFlyAngle()
 		S.undergroundDepthOffset = getUndergroundDepthOffset()
-		S.undergroundAngle = getUndergroundAngle()
-		S.undergroundLayAngle = getUndergroundLayAngle()
-		S.undergroundRollFramePercent = getUndergroundRollFramePercent()
-		S.undergroundRollMode = getUndergroundRollMode()
-		S.undergroundRollTrack = getUndergroundRollTrack()
 	end
 	ensurePathSlotState()
 	setFocusedPathSlotIndex(pathState.focusedPathSlotIndex, true)
@@ -20086,315 +19890,6 @@ function isUndergroundOreHoldActive()
 	local state = playerState.undergroundOreHold
 	return type(state) == "table" and state.active == true
 end
-local UNDERGROUND_TRAVEL_FALL_TRACK_CANDIDATES = {"LeftFall", "Fall", "FrontFallNew", "FrontFall"}
-local UNDERGROUND_ANIMATION_DIRECT_PATHS = {
-	LeftFall = {"Resources", "Animations_New", "Player", "Movement", "Rolling", "LeftFall"},
-}
-function getUndergroundDirectAnimationInstance(trackName)
-	local cache = rawget(_G, "__AutoMineUndergroundAnimationPathCache")
-	if type(cache) ~= "table" then
-		cache = {}
-		_G.__AutoMineUndergroundAnimationPathCache = cache
-	end
-	if cache[trackName] ~= nil then
-		return cache[trackName] ~= false and cache[trackName] or nil
-	end
-	local pathParts = UNDERGROUND_ANIMATION_DIRECT_PATHS[trackName]
-	if type(pathParts) ~= "table" then
-		cache[trackName] = false
-		return nil
-	end
-	local current = ReplicatedStorage
-	for _, childName in ipairs(pathParts) do
-		current = current and current:FindFirstChild(childName)
-		if not current then
-			return nil
-		end
-	end
-	cache[trackName] = current
-	return current
-end
-function getUndergroundSharedAnimations()
-	local cache = rawget(_G, "__AutoMineSharedAnimations")
-	if isTable(cache) then
-		return cache
-	end
-	if type(getAutoMineGlobalModule) ~= "function" then
-		return nil
-	end
-	local globalModule = getAutoMineGlobalModule(false) or getAutoMineGlobalModule(true)
-	if isTable(globalModule) then
-		local sharedAnimations = rawget(globalModule, "SharedAnimations") or globalModule.SharedAnimations
-		if not isTable(sharedAnimations) and type(globalModule.LoadModule) == "function" then
-			local okLoad, loaded = pcall(function()
-				return globalModule:LoadModule("SharedAnimations")
-			end)
-			if okLoad and isTable(loaded) then
-				sharedAnimations = loaded
-				globalModule.SharedAnimations = loaded
-			end
-		end
-		if isTable(sharedAnimations) then
-			_G.__AutoMineSharedAnimations = sharedAnimations
-			return sharedAnimations
-		end
-	end
-	return nil
-end
-function undergroundAnimationExists(trackName)
-	if getUndergroundDirectAnimationInstance(trackName) then
-		return true
-	end
-	local sharedAnimations = getUndergroundSharedAnimations()
-	local animations = isTable(sharedAnimations) and (rawget(sharedAnimations, "Animations") or sharedAnimations.Animations) or nil
-	if isTable(animations) then
-		return animations[trackName] ~= nil
-	end
-	return nil
-end
-function getUndergroundAnimationHandler(state, character)
-	if type(state) ~= "table" then
-		state = getUndergroundTravelState()
-	end
-	local playerCharacter = state.playerCharacter
-	if not isTable(playerCharacter) and type(resolvePlayerCharacterModule) == "function" then
-		playerCharacter = resolvePlayerCharacterModule(false) or resolvePlayerCharacterModule(true)
-	end
-	if isTable(playerCharacter) then
-		state.playerCharacter = playerCharacter
-		local handler = rawget(playerCharacter, "AnimationHandler") or playerCharacter.AnimationHandler
-		if isTable(handler) and type(rawget(handler, "PlayTrack") or handler.PlayTrack) == "function" then
-			return handler
-		end
-	end
-	local repChar = state.repChar
-	if not isTable(repChar) and type(resolveLocalRepChar) == "function" then
-		repChar = resolveLocalRepChar(false) or resolveLocalRepChar(true)
-	end
-	if isTable(repChar) then
-		state.repChar = repChar
-		local handler = rawget(repChar, "AnimationHandler") or repChar.AnimationHandler
-		if isTable(handler) and type(rawget(handler, "PlayTrack") or handler.PlayTrack) == "function" then
-			return handler
-		end
-	end
-	return nil
-end
-function getUndergroundTravelFallTrackName(state)
-	if getUndergroundDirectAnimationInstance("LeftFall") then
-		if type(state) == "table" then
-			state.undergroundFallTrackName = "LeftFall"
-			state.undergroundLeftFallPathResolved = true
-		end
-		return "LeftFall"
-	end
-	if type(state) == "table" and type(state.undergroundFallTrackName) == "string" then
-		return state.undergroundFallTrackName
-	end
-	for _, trackName in ipairs(UNDERGROUND_TRAVEL_FALL_TRACK_CANDIDATES) do
-		local exists = undergroundAnimationExists(trackName)
-		if exists == true or (exists == nil and trackName == "Fall") then
-			if type(state) == "table" then
-				state.undergroundFallTrackName = trackName
-				state.undergroundLeftFallPathResolved = trackName == "LeftFall"
-			end
-			return trackName
-		end
-	end
-	return "Fall"
-end
-function isUndergroundAnimationTrackPlaying(handler, trackName, track)
-	local isTrackPlaying = isTable(handler) and (rawget(handler, "IsTrackPlaying") or handler.IsTrackPlaying) or nil
-	if type(isTrackPlaying) == "function" then
-		local okPlaying, playing = pcall(isTrackPlaying, handler, trackName)
-		if okPlaying then
-			return playing == true
-		end
-	end
-	if track then
-		local okTrackPlaying, trackPlaying = pcall(function()
-			return track.IsPlaying == true
-		end)
-		if okTrackPlaying then
-			return trackPlaying == true
-		end
-	end
-	return false
-end
-function getUndergroundTravelAnimationDebugText(character)
-	local state = playerState and playerState.undergroundTravel
-	if type(state) ~= "table" or (state.active ~= true and type(state.undergroundAnimationTracks) ~= "table") then
-		state = playerState and playerState.undergroundOreHold
-	end
-	if type(state) ~= "table" then
-		return "none"
-	end
-	if state.active ~= true and type(state.undergroundAnimationTracks) ~= "table" then
-		return "none"
-	end
-	local handler = state.undergroundAnimationHandler or getUndergroundAnimationHandler(state, character)
-	local names = {}
-	local seen = {}
-	local function addName(trackName)
-		if type(trackName) == "string" and trackName ~= "" and not seen[trackName] then
-			seen[trackName] = true
-			table.insert(names, trackName)
-		end
-	end
-	addName("CrouchIdle")
-	addName(state.undergroundFallTrackName)
-	addName("LeftFall")
-	addName("Fall")
-	local playing = {}
-	local tracks = type(state.undergroundAnimationTracks) == "table" and state.undergroundAnimationTracks or {}
-	for _, trackName in ipairs(names) do
-		if isUndergroundAnimationTrackPlaying(handler, trackName, tracks[trackName]) then
-			table.insert(playing, trackName)
-		end
-	end
-	if #playing <= 0 then
-		return "none"
-	end
-	return table.concat(playing, ",")
-end
-function stopUndergroundTravelAnimations(state)
-	if type(state) ~= "table" then
-		return
-	end
-	local handler = state.undergroundAnimationHandler
-	local tracks = state.undergroundAnimationTracks
-	if type(tracks) == "table" then
-		for trackName, track in pairs(tracks) do
-			local stopped = false
-			local stopTrack = isTable(handler) and (rawget(handler, "StopTrack") or handler.StopTrack) or nil
-			if type(stopTrack) == "function" then
-				stopped = pcall(stopTrack, handler, trackName, 0.12) and true or false
-			end
-			if not stopped and track and type(track.Stop) == "function" then
-				pcall(function()
-					track:Stop(0.12)
-				end)
-			end
-		end
-	end
-	state.undergroundAnimationHandler = nil
-	state.undergroundAnimationTracks = nil
-	state.undergroundFallTrackName = nil
-end
-function ensureUndergroundPlatformTravelPose(character, state)
-	state = type(state) == "table" and state or getUndergroundTravelState()
-	local currentHumanoid = getHumanoid(character)
-	local humanoid = currentHumanoid or state.freezeHumanoid
-	if currentHumanoid and state.freezeHumanoid ~= currentHumanoid then
-		state.freezeHumanoid = currentHumanoid
-		state.originalAutoRotate = currentHumanoid.AutoRotate
-		state.originalPlatformStand = currentHumanoid.PlatformStand
-		pcall(function()
-			state.originalEvaluateStateMachine = currentHumanoid.EvaluateStateMachine
-		end)
-	end
-	if humanoid then
-		pcall(function()
-			humanoid.AutoRotate = false
-			humanoid.PlatformStand = true
-			humanoid.Jump = false
-			if state.originalEvaluateStateMachine ~= nil then
-				humanoid.EvaluateStateMachine = false
-			end
-			humanoid:ChangeState(Enum.HumanoidStateType.PlatformStanding)
-			humanoid:Move(Vector3.zero)
-		end)
-	end
-	local handler = getUndergroundAnimationHandler(state, character)
-	if not handler then
-		return humanoid ~= nil
-	end
-	if state.undergroundAnimationHandler ~= handler then
-		stopUndergroundTravelAnimations(state)
-		state.undergroundAnimationHandler = handler
-		state.undergroundAnimationTracks = {}
-	end
-	local playTrack = rawget(handler, "PlayTrack") or handler.PlayTrack
-	if type(playTrack) ~= "function" then
-		return humanoid ~= nil
-	end
-	local trackNames = {"CrouchIdle", getUndergroundTravelFallTrackName(state)}
-	for _, trackName in ipairs(trackNames) do
-		local shouldPlay = true
-		local existingTrack = state.undergroundAnimationTracks and state.undergroundAnimationTracks[trackName]
-		if existingTrack then
-			pcall(function()
-				shouldPlay = existingTrack.IsPlaying ~= true
-			end)
-		end
-		if shouldPlay then
-			local okPlay, track = pcall(playTrack, handler, trackName, 0.12, 1, 1)
-			if okPlay and track then
-				state.undergroundAnimationTracks[trackName] = track
-			end
-		end
-	end
-	return true
-end
-function restoreUndergroundPreReplicateHook()
-	local connection = playerState.undergroundPreReplicateConnection
-	if connection and type(connection.Disconnect) == "function" then
-		pcall(function()
-			connection:Disconnect()
-		end)
-	elseif connection and type(connection.Destroy) == "function" then
-		pcall(function()
-			connection:Destroy()
-		end)
-	end
-	playerState.undergroundPreReplicateConnection = nil
-	playerState.undergroundPreReplicateOwner = nil
-end
-function ensureUndergroundPreReplicateHook()
-	local state = getUndergroundTravelState()
-	local globalModule = getAutoMineGlobalModule(true)
-	if not isTable(globalModule) then
-		return false
-	end
-	local bindToHeartbeat = rawget(globalModule, "BindToHeartbeat") or globalModule.BindToHeartbeat
-	if type(bindToHeartbeat) ~= "function" then
-		return false
-	end
-	if playerState.undergroundPreReplicateConnection and playerState.undergroundPreReplicateOwner == globalModule then
-		return true
-	end
-	restoreUndergroundPreReplicateHook()
-	local okBind, connection = pcall(function()
-		return bindToHeartbeat(globalModule, "AutoMineUndergroundPreReplicate", 8000000000, function()
-			local activeState = playerState.undergroundTravel
-			if type(activeState) ~= "table" or activeState.active ~= true then
-				restoreUndergroundPreReplicateHook()
-				return
-			end
-			local character = activeState.character
-			local goalCFrame = activeState.pendingGoalCFrame
-			if typeof(character) ~= "Instance" or typeof(goalCFrame) ~= "CFrame" then
-				return
-			end
-			clearUndergroundRepPlatform(activeState)
-			ensureUndergroundPlatformTravelPose(character, activeState)
-			applyUndergroundForcedCFrameGoal(character, goalCFrame)
-		end)
-	end)
-	if okBind and connection then
-		playerState.undergroundPreReplicateConnection = connection
-		playerState.undergroundPreReplicateOwner = globalModule
-		state.usedPreReplicateHook = true
-		if type(pushDebugRateLimited) == "function" then
-			pushDebugRateLimited("underground_prerep_hook", "underground pre-replicate hook installed", 8)
-		end
-		return true
-	end
-	if type(pushDebugRateLimited) == "function" then
-		pushDebugRateLimited("underground_prerep_hook_failed", "underground pre-replicate hook unavailable", 8)
-	end
-	return false
-end
 function setUndergroundRootVelocity(rootPart, velocity)
 	if not rootPart or typeof(velocity) ~= "Vector3" then
 		return false
@@ -20403,858 +19898,17 @@ function setUndergroundRootVelocity(rootPart, velocity)
 		rootPart.Velocity = velocity
 	end)
 	pcall(function()
+		rootPart.RotVelocity = Vector3.zero
+	end)
+	pcall(function()
 		rootPart.AssemblyLinearVelocity = velocity
 		rootPart.AssemblyAngularVelocity = Vector3.zero
 	end)
 	return ok
 end
-function setUndergroundCharacterCollisionEnabled(character, isEnabled)
-	if not character then
-		return false
-	end
-	local state = getUndergroundTravelState()
-	if isEnabled == false then
-		local savedParts = state.collisionParts
-		if type(savedParts) ~= "table" then
-			savedParts = {}
-			state.collisionParts = savedParts
-		end
-		local changed = false
-		for _, descendant in ipairs(character:GetDescendants()) do
-			if descendant:IsA("BasePart") then
-				if savedParts[descendant] == nil then
-					savedParts[descendant] = descendant.CanCollide
-				end
-				pcall(function()
-					descendant.CanCollide = false
-				end)
-				changed = true
-			end
-		end
-		return changed
-	end
-	local savedParts = state.collisionParts
-	if type(savedParts) ~= "table" then
-		return false
-	end
-	for part, canCollide in pairs(savedParts) do
-		if typeof(part) == "Instance" and part:IsA("BasePart") then
-			pcall(function()
-				part.CanCollide = canCollide == true
-			end)
-		end
-	end
-	state.collisionParts = nil
-	return true
-end
-function clearUndergroundRepPlatform(state)
-	state = type(state) == "table" and state or getUndergroundTravelState()
-	local repChar = state.repChar or resolveLocalRepChar(false) or resolveLocalRepChar(true)
-	if not isTable(repChar) then
-		return false
-	end
-	state.repChar = repChar
-	state.preservedPlatform = nil
-	state.initialPlatform = nil
-	pcall(function()
-		repChar.CurrentPlatform = nil
-		repChar.FloorPlatform = nil
-		repChar.LastFloorPlatform = nil
-		repChar.LastFloorPart = nil
-		repChar.LastWasGrounded = false
-	end)
-	return true
-end
-function applyUndergroundForcedCFrameGoal(character, goalCFrame)
-	if not (character and typeof(goalCFrame) == "CFrame") then
-		return false
-	end
-	local state = getUndergroundTravelState()
-	local repChar = state.repChar or resolveLocalRepChar(false) or resolveLocalRepChar(true)
-	local rootPart = getRootPart(character)
-	local moved = false
-	state.pendingGoalCFrame = goalCFrame
-	local targetVelocity = typeof(state.pendingVelocity) == "Vector3" and state.pendingVelocity or Vector3.zero
-	if isTable(repChar) then
-		state.repChar = repChar
-		clearUndergroundRepPlatform(state)
-		pcall(function()
-			repChar.LocalForceCFrame = goalCFrame
-		end)
-		state.usedLocalForceCFrame = true
-		moved = true
-	end
-	if rootPart then
-		if state.originalRootAnchored == nil then
-			state.originalRootAnchored = rootPart.Anchored
-		end
-		state.forceRootPart = rootPart
-		local okMove = pcall(function()
-			rootPart.CFrame = goalCFrame
-			rootPart.Anchored = false
-			rootPart.Velocity = targetVelocity
-			rootPart.RotVelocity = Vector3.zero
-		end)
-		pcall(function()
-			rootPart.AssemblyLinearVelocity = targetVelocity
-			rootPart.AssemblyAngularVelocity = Vector3.zero
-		end)
-		moved = okMove or moved
-	end
-	clearUndergroundRepPlatform(state)
-	return moved
-end
-function ensureUndergroundBodyFreeze(character, rootPart, flatDirection)
-	if not rootPart then
-		return false
-	end
-	local state = getUndergroundTravelState()
-	local playerCharacter = state.playerCharacter or resolvePlayerCharacterModule(false) or resolvePlayerCharacterModule(true)
-	local repChar = state.repChar or resolveLocalRepChar(false) or resolveLocalRepChar(true)
-	local clientPlatforms = state.clientPlatforms or ensureUndergroundPlatformHook()
-	state.playerCharacter = playerCharacter
-	state.repChar = repChar
-	state.clientPlatforms = clientPlatforms
-	if isTable(playerCharacter) and not state.playerFaceMouseDisabled then
-		local faceMouse = rawget(playerCharacter, "FaceMouse") or playerCharacter.FaceMouse
-		state.originalPlayerFacingMouse = rawget(playerCharacter, "FacingMouse") ~= false
-		if type(faceMouse) == "function" then
-			state.playerFaceMouseDisabled = pcall(faceMouse, playerCharacter, false) and true or false
-		else
-			pcall(function()
-				playerCharacter.FacingMouse = false
-			end)
-			state.playerFaceMouseDisabled = true
-		end
-	end
-	if isTable(repChar) and not state.faceMouseDisabled then
-		state.faceMouseDisabled = setExperimentalRepFaceMouseDisabled(repChar, true) and true or false
-	end
-	if isTable(repChar) and state.usedLocalRepCharRagdollFlag then
-		pcall(function()
-			repChar.IsRagdolled = true
-		end)
-	end
-	clearUndergroundRepPlatform(state)
-	local humanoid = getHumanoid(character)
-	if humanoid then
-		ensureUndergroundPlatformTravelPose(character, state)
-	end
-	setUndergroundCharacterCollisionEnabled(character, false)
-	if type(ensurePlayerStateNetworkHook) == "function" then
-		ensurePlayerStateNetworkHook()
-	end
-	if type(ensureSafeTeleportHooks) == "function" then
-		ensureSafeTeleportHooks()
-	end
-	if typeof(state.baseRotation) ~= "CFrame" then
-		state.baseRotation = rootPart.CFrame - rootPart.Position
-	end
-	state.undergroundFlatDirection = getUndergroundTravelDirection(rootPart, flatDirection)
-	state.lockedRotation = getUndergroundTravelRotation(rootPart, state.undergroundFlatDirection)
-	if state.originalRootAnchored == nil then
-		state.originalRootAnchored = rootPart.Anchored
-	end
-	state.forceRootPart = rootPart
-	pcall(function()
-		rootPart.Anchored = false
-		rootPart.Velocity = Vector3.zero
-		rootPart.RotVelocity = Vector3.zero
-	end)
-	pcall(function()
-		rootPart.AssemblyLinearVelocity = Vector3.zero
-		rootPart.AssemblyAngularVelocity = Vector3.zero
-	end)
-	local gyro = state.bodyGyro
-	if not gyro or gyro.Parent ~= rootPart then
-		if gyro then
-			pcall(function()
-				gyro:Destroy()
-			end)
-		end
-		gyro = Instance.new("BodyGyro")
-		gyro.Name = "AutoMineUndergroundFreeze"
-		gyro.MaxTorque = Vector3.new(9e8, 9e8, 9e8)
-		gyro.P = 60000
-		gyro.D = 1600
-		gyro.Parent = rootPart
-		state.bodyGyro = gyro
-	end
-	pcall(function()
-		gyro.CFrame = CFrame.new(rootPart.Position) * state.lockedRotation
-		rootPart.AssemblyAngularVelocity = Vector3.zero
-		rootPart.RotVelocity = Vector3.zero
-	end)
-	return true
-end
-function legacyControlledUndergroundEndOreHold(character)
-	local state = getUndergroundOreHoldState()
-	if not state.active and not state.character then
-		return
-	end
-	local activeCharacter = character or state.character
-	local repChar = state.repChar or resolveLocalRepChar(false)
-	local playerCharacter = state.playerCharacter or resolvePlayerCharacterModule(false)
-	local humanoid = state.humanoid or getHumanoid(activeCharacter)
-	local rootPart = getRootPart(activeCharacter)
-	if state.bodyGyro then
-		pcall(function()
-			state.bodyGyro:Destroy()
-		end)
-	end
-	if isTable(repChar) and state.faceMouseDisabled then
-		setExperimentalRepFaceMouseDisabled(repChar, false)
-	end
-	if isTable(playerCharacter) and state.playerFaceMouseDisabled then
-		local faceMouse = rawget(playerCharacter, "FaceMouse") or playerCharacter.FaceMouse
-		if type(faceMouse) == "function" then
-			pcall(faceMouse, playerCharacter, state.originalPlayerFacingMouse ~= false)
-		else
-			pcall(function()
-				playerCharacter.FacingMouse = state.originalPlayerFacingMouse ~= false
-			end)
-		end
-	end
-	if state.freezeHumanoid and state.originalAutoRotate ~= nil then
-		pcall(function()
-			state.freezeHumanoid.AutoRotate = state.originalAutoRotate
-		end)
-	end
-	if state.freezeHumanoid and state.originalPlatformStand ~= nil then
-		pcall(function()
-			state.freezeHumanoid.PlatformStand = state.originalPlatformStand
-		end)
-	end
-	if state.freezeHumanoid and state.originalEvaluateStateMachine ~= nil then
-		pcall(function()
-			state.freezeHumanoid.EvaluateStateMachine = state.originalEvaluateStateMachine
-		end)
-	end
-	if rootPart then
-		setUndergroundRootVelocity(rootPart, Vector3.zero)
-	end
-	stopUndergroundTravelAnimations(state)
-	local forceRootPart = rootPart or state.forceRootPart
-	if forceRootPart and state.originalRootAnchored ~= nil then
-		pcall(function()
-			forceRootPart.Anchored = state.originalRootAnchored
-		end)
-	end
-	setUndergroundCharacterCollisionEnabled(activeCharacter, true)
-	playerState.undergroundOreHold = {}
-	if type(ensurePlayerStateNetworkHook) == "function" then
-		ensurePlayerStateNetworkHook()
-	end
-	if type(ensureSafeTeleportHooks) == "function" and playerState.noRagdollEnabled then
-		ensureSafeTeleportHooks()
-	elseif type(restoreSafeTeleportHooks) == "function" then
-		restoreSafeTeleportHooks()
-	end
-end
-function legacyControlledUndergroundBeginOreHold(character, targetPosition)
-	if not (character and isUndergroundMovementMode(movementMode)) then
-		return false
-	end
-	local holdState = getUndergroundOreHoldState()
-	local travelState = getUndergroundTravelState()
-	local preservedBaseRotation = typeof(travelState.baseRotation) == "CFrame" and travelState.baseRotation or nil
-	if travelState.active then
-		endUndergroundTravel(character)
-	end
-	local rootPart = getRootPart(character)
-	if not rootPart then
-		return false
-	end
-	local targetReferencePosition = typeof(targetPosition) == "Vector3" and targetPosition or rootPart.Position
-	local goalPosition = getUndergroundGoalPosition(targetReferencePosition, character) or targetReferencePosition
-	local holdFlatDirection = normalizeUndergroundFlatDirection(targetReferencePosition - rootPart.Position)
-		or getUndergroundTravelDirection(rootPart)
-	local goalCFrame = getUndergroundGoalCFrame(goalPosition, rootPart, holdFlatDirection)
-	local humanoid = getHumanoid(character)
-	local repChar = resolveLocalRepChar(false) or resolveLocalRepChar(true)
-	local playerCharacter = resolvePlayerCharacterModule(false) or resolvePlayerCharacterModule(true)
-	holdState.active = true
-	holdState.character = character
-	holdState.humanoid = humanoid
-	holdState.repChar = repChar
-	holdState.playerCharacter = playerCharacter
-	holdState.targetReferencePosition = targetReferencePosition
-	holdState.goalPosition = goalPosition
-	holdState.undergroundFlatDirection = holdFlatDirection
-	holdState.baseRotation = preservedBaseRotation or holdState.baseRotation or (rootPart.CFrame - rootPart.Position)
-	holdState.lockedRotation = getUndergroundTravelRotation(rootPart, holdFlatDirection)
-	if isTable(playerCharacter) and not holdState.playerFaceMouseDisabled then
-		local faceMouse = rawget(playerCharacter, "FaceMouse") or playerCharacter.FaceMouse
-		holdState.originalPlayerFacingMouse = rawget(playerCharacter, "FacingMouse") ~= false
-		if type(faceMouse) == "function" then
-			holdState.playerFaceMouseDisabled = pcall(faceMouse, playerCharacter, false) and true or false
-		else
-			pcall(function()
-				playerCharacter.FacingMouse = false
-			end)
-			holdState.playerFaceMouseDisabled = true
-		end
-	end
-	if isTable(repChar) and not holdState.faceMouseDisabled then
-		holdState.faceMouseDisabled = setExperimentalRepFaceMouseDisabled(repChar, true) and true or false
-	end
-	if humanoid and holdState.freezeHumanoid ~= humanoid then
-		holdState.freezeHumanoid = humanoid
-		holdState.originalAutoRotate = humanoid.AutoRotate
-		holdState.originalPlatformStand = humanoid.PlatformStand
-		pcall(function()
-			holdState.originalEvaluateStateMachine = humanoid.EvaluateStateMachine
-		end)
-	end
-	if humanoid then
-		ensureUndergroundPlatformTravelPose(character, holdState)
-	end
-	setUndergroundCharacterCollisionEnabled(character, false)
-	if holdState.originalRootAnchored == nil then
-		holdState.originalRootAnchored = rootPart.Anchored
-	end
-	holdState.forceRootPart = rootPart
-	local gyro = holdState.bodyGyro
-	if not gyro or gyro.Parent ~= rootPart then
-		if gyro then
-			pcall(function()
-				gyro:Destroy()
-			end)
-		end
-		gyro = Instance.new("BodyGyro")
-		gyro.Name = "AutoMineUndergroundOreHold"
-		gyro.MaxTorque = Vector3.new(9e8, 9e8, 9e8)
-		gyro.P = 60000
-		gyro.D = 1600
-		gyro.Parent = rootPart
-		holdState.bodyGyro = gyro
-	end
-	pcall(function()
-		rootPart.CFrame = goalCFrame
-		rootPart.Anchored = false
-		rootPart.Velocity = Vector3.zero
-		rootPart.RotVelocity = Vector3.zero
-	end)
-	pcall(function()
-		rootPart.AssemblyLinearVelocity = Vector3.zero
-		rootPart.AssemblyAngularVelocity = Vector3.zero
-	end)
-	pcall(function()
-		gyro.CFrame = goalCFrame
-	end)
-	if type(ensurePlayerStateNetworkHook) == "function" then
-		ensurePlayerStateNetworkHook()
-	end
-	if type(ensureSafeTeleportHooks) == "function" then
-		ensureSafeTeleportHooks()
-	end
-	return true
-end
-function syncUndergroundOrientationState(character)
-	if not isUndergroundMovementMode(movementMode) then
-		return false
-	end
-	local activeCharacter = character or cachedCharacter
-	local travelState = getUndergroundTravelState()
-	if travelState.active and typeof(activeCharacter) == "Instance" then
-		local rootPart = getRootPart(activeCharacter)
-		if rootPart then
-			travelState.lockedRotation = getUndergroundTravelRotation(rootPart, travelState.undergroundFlatDirection)
-			if travelState.bodyGyro then
-				pcall(function()
-					travelState.bodyGyro.CFrame = CFrame.new(rootPart.Position) * travelState.lockedRotation
-				end)
-			end
-			if travelState.forceRootPart == rootPart then
-				local goalCFrame = getUndergroundGoalCFrame(rootPart.Position, rootPart, travelState.undergroundFlatDirection)
-				pcall(function()
-					rootPart.CFrame = goalCFrame
-				end)
-			end
-		end
-	end
-	local oreHoldState = getUndergroundOreHoldState()
-	if oreHoldState.active and typeof(oreHoldState.character) == "Instance" then
-		local oreCharacter = character or oreHoldState.character
-		local targetReferencePosition = oreHoldState.targetReferencePosition or oreHoldState.goalPosition
-		if typeof(targetReferencePosition) == "Vector3" then
-			beginUndergroundOreHold(oreCharacter, targetReferencePosition)
-			return true
-		end
-	end
-	return true
-end
-function legacyControlledUndergroundBeginTravel(character)
-	if not (character and isUndergroundMovementMode(movementMode)) then
-		return false
-	end
-	if isUndergroundOreHoldActive() then
-		endUndergroundOreHold(character)
-	end
-	local state = getUndergroundTravelState()
-	if state.active and state.character == character then
-		ensureUndergroundPreReplicateHook()
-		local activeRootPart = getRootPart(character)
-		if activeRootPart then
-			ensureUndergroundBodyFreeze(character, activeRootPart, lastMoveCommand)
-		end
-		return true
-	end
-	if state.active then
-		endUndergroundTravel(state.character or character)
-		state = getUndergroundTravelState()
-	end
-	local playerCharacter = resolvePlayerCharacterModule(false) or resolvePlayerCharacterModule(true)
-	local repChar = resolveLocalRepChar(false) or resolveLocalRepChar(true)
-	local humanoid = getHumanoid(character)
-	local ragdolls = nil
-	local clientPlatforms = ensureUndergroundPlatformHook()
-	local useControlledRagdoll = false
-	state.active = true
-	state.character = character
-	state.playerCharacter = playerCharacter
-	state.repChar = repChar
-	state.humanoid = humanoid
-	state.ragdolls = ragdolls
-	state.clientPlatforms = clientPlatforms
-	state.initialPlatform = nil
-	state.preservedPlatform = nil
-	state.useControlledRagdoll = useControlledRagdoll
-	state.usePlatformStandingTravel = true
-	local startRootPart = getRootPart(character)
-	state.baseRotation = startRootPart and (startRootPart.CFrame - startRootPart.Position) or nil
-	state.undergroundFlatDirection = getUndergroundTravelDirection(startRootPart, lastMoveCommand)
-	ensureUndergroundPreReplicateHook()
-	if useControlledRagdoll and isTable(playerCharacter) and type(rawget(playerCharacter, "OnControlLost") or playerCharacter.OnControlLost) == "function" then
-		local okControlLost = pcall(playerCharacter.OnControlLost, playerCharacter)
-		state.usedControlLost = okControlLost and true or false
-	end
-	if useControlledRagdoll and isTable(repChar) then
-		if state.originalRepCharIsRagdolled == nil then
-			state.originalRepCharIsRagdolled = rawget(repChar, "IsRagdolled")
-			if state.originalRepCharIsRagdolled == nil then
-				state.originalRepCharIsRagdolled = repChar.IsRagdolled
-			end
-		end
-		pcall(function()
-			repChar.IsRagdolled = true
-		end)
-		state.usedLocalRepCharRagdollFlag = true
-	end
-	if useControlledRagdoll and isTable(playerCharacter) then
-		local ragdollMethod = rawget(playerCharacter, "Ragdoll") or playerCharacter.Ragdoll
-		if type(ragdollMethod) == "function" then
-			local okServerRagdoll = pcall(ragdollMethod, playerCharacter, nil, true)
-			state.usedServerRagdoll = okServerRagdoll and true or false
-			state.usedSoftSelfRagdoll = okServerRagdoll and true or false
-		end
-		if not state.usedSoftSelfRagdoll then
-			local toggleSelfRagdoll = rawget(playerCharacter, "ToggleSelfRagdoll") or playerCharacter.ToggleSelfRagdoll
-			if type(toggleSelfRagdoll) == "function" then
-				local okSoftRagdoll = pcall(toggleSelfRagdoll, playerCharacter, true)
-				state.usedSoftSelfRagdoll = okSoftRagdoll and true or false
-			end
-		end
-	end
-	if useControlledRagdoll and isTable(ragdolls) then
-		local controlRagdoll = rawget(ragdolls, "ControlRagdoll") or ragdolls.ControlRagdoll
-		if type(controlRagdoll) == "function" then
-			local okControlled = pcall(controlRagdoll, ragdolls, character)
-			local isControllingRagdoll = rawget(ragdolls, "IsControllingRagdoll") or ragdolls.IsControllingRagdoll
-			local reallyControlled = false
-			if okControlled and type(isControllingRagdoll) == "function" then
-				local okCheck, checkResult = pcall(isControllingRagdoll, ragdolls, character)
-				reallyControlled = okCheck and checkResult == true
-			end
-			state.usedControlledRagdoll = reallyControlled
-		end
-	end
-	if useControlledRagdoll and isTable(repChar) and type(rawget(repChar, "ControlRagdoll") or repChar.ControlRagdoll) == "function" then
-		local okRepControlled = pcall(repChar.ControlRagdoll, repChar)
-		state.usedRepCharControlledRagdoll = okRepControlled and true or false
-	end
-	if humanoid then
-		pcall(function()
-			if type(humanoid.UnequipTools) == "function" then
-				humanoid:UnequipTools()
-			end
-			humanoid.Jump = false
-			humanoid:Move(Vector3.zero)
-		end)
-	end
-	if useControlledRagdoll and isTable(playerCharacter) and not state.usedControlLost then
-		if type(rawget(playerCharacter, "EquipItem") or playerCharacter.EquipItem) == "function" then
-			pcall(playerCharacter.EquipItem, playerCharacter, nil, true)
-		end
-		if type(rawget(playerCharacter, "StopAllTracks") or playerCharacter.StopAllTracks) == "function" then
-			pcall(playerCharacter.StopAllTracks, playerCharacter)
-		end
-	end
-	local rootPart = getRootPart(character)
-	if rootPart then
-		ensureUndergroundBodyFreeze(character, rootPart, Vector3.new(0, 0, -1))
-	end
-	clearUndergroundRepPlatform(state)
-	return true
-end
-function legacyControlledUndergroundEndTravel(character)
-	local state = getUndergroundTravelState()
-	local oreHoldState = playerState.undergroundOreHold
-	if (not state.active and not state.playerCharacter and not state.usedControlledRagdoll and not state.usedSoftSelfRagdoll)
-		and type(oreHoldState) == "table"
-		and oreHoldState.active == true then
-		endUndergroundOreHold(character)
-		return
-	end
-	if not state.active and not state.playerCharacter and not state.usedControlledRagdoll and not state.usedSoftSelfRagdoll then
-		return
-	end
-	local activeCharacter = character or state.character
-	local playerCharacter = state.playerCharacter or resolvePlayerCharacterModule(false)
-	local repChar = state.repChar or resolveLocalRepChar(false)
-	local ragdolls = state.ragdolls or resolveRagdollsModule(false) or resolveRagdollsModule(true)
-	local humanoid = state.humanoid or getHumanoid(activeCharacter)
-	local network = resolveGlobalNetwork(false) or resolveGlobalNetwork(true)
-	local rootPart = getRootPart(activeCharacter)
-	state.ending = true
-	stopUndergroundTravelAnimations(state)
-	if state.bodyGyro then
-		pcall(function()
-			state.bodyGyro:Destroy()
-		end)
-	end
-	if isTable(repChar) and state.usedLocalForceCFrame then
-		pcall(function()
-			repChar.LocalForceCFrame = nil
-		end)
-	end
-	if isTable(repChar) and state.faceMouseDisabled then
-		setExperimentalRepFaceMouseDisabled(repChar, false)
-	end
-	if isTable(playerCharacter) and state.playerFaceMouseDisabled then
-		local faceMouse = rawget(playerCharacter, "FaceMouse") or playerCharacter.FaceMouse
-		if type(faceMouse) == "function" then
-			pcall(faceMouse, playerCharacter, state.originalPlayerFacingMouse ~= false)
-		else
-			pcall(function()
-				playerCharacter.FacingMouse = state.originalPlayerFacingMouse ~= false
-			end)
-		end
-	end
-	if isTable(ragdolls) and state.usedControlledRagdoll then
-		local uncontrolRagdoll = rawget(ragdolls, "UncontrolRagdoll") or ragdolls.UncontrolRagdoll
-		if type(uncontrolRagdoll) == "function" then
-			pcall(uncontrolRagdoll, ragdolls, character or state.character)
-		end
-	end
-	if isTable(repChar) and state.usedRepCharControlledRagdoll and type(rawget(repChar, "UncontrolRagdoll") or repChar.UncontrolRagdoll) == "function" then
-		pcall(repChar.UncontrolRagdoll, repChar)
-	end
-	if isTable(repChar) and state.usedLocalRepCharRagdollFlag then
-		local restoreIsRagdolled = state.originalRepCharIsRagdolled == true
-		pcall(function()
-			repChar.IsRagdolled = restoreIsRagdolled
-		end)
-	end
-	if isTable(playerCharacter) and humanoid and humanoid.Health > 0 then
-		if state.usedSoftSelfRagdoll and type(rawget(playerCharacter, "ToggleSelfRagdoll") or playerCharacter.ToggleSelfRagdoll) == "function" then
-			pcall(playerCharacter.ToggleSelfRagdoll, playerCharacter, false)
-		end
-		if state.usedControlLost and type(rawget(playerCharacter, "GainControl") or playerCharacter.GainControl) == "function" then
-			pcall(playerCharacter.GainControl, playerCharacter)
-		end
-	end
-	if humanoid then
-		pcall(function()
-			humanoid.Jump = false
-			humanoid:Move(Vector3.zero)
-		end)
-	end
-	if state.usedServerRagdoll and humanoid and humanoid.Health > 0 and network and type(network.InvokeServer) == "function" then
-		pcall(function()
-			network:InvokeServer("AttemptGetUp")
-		end)
-	end
-	if state.freezeHumanoid and state.originalAutoRotate ~= nil then
-		pcall(function()
-			state.freezeHumanoid.AutoRotate = state.originalAutoRotate
-		end)
-	end
-	if state.freezeHumanoid and state.originalPlatformStand ~= nil then
-		pcall(function()
-			state.freezeHumanoid.PlatformStand = state.originalPlatformStand
-		end)
-	end
-	if state.freezeHumanoid and state.originalEvaluateStateMachine ~= nil then
-		pcall(function()
-			state.freezeHumanoid.EvaluateStateMachine = state.originalEvaluateStateMachine
-		end)
-	end
-	if rootPart then
-		setUndergroundRootVelocity(rootPart, Vector3.zero)
-	end
-	local forceRootPart = rootPart or state.forceRootPart
-	if forceRootPart and state.originalRootAnchored ~= nil then
-		pcall(function()
-			forceRootPart.Anchored = state.originalRootAnchored
-		end)
-	end
-	setUndergroundCharacterCollisionEnabled(character or state.character, true)
-	playerState.undergroundTravel = {}
-	restoreUndergroundPreReplicateHook()
-	restoreUndergroundPlatformHook()
-	if type(ensurePlayerStateNetworkHook) == "function" then
-		ensurePlayerStateNetworkHook()
-	end
-	if type(ensureSafeTeleportHooks) == "function" and playerState.noRagdollEnabled then
-		ensureSafeTeleportHooks()
-	elseif type(restoreSafeTeleportHooks) == "function" then
-		restoreSafeTeleportHooks()
-	end
-end
-function legacyControlledUndergroundEnsureState(character, flatDirection)
-	if not beginControlledUndergroundTravel(character) then
-		return false
-	end
-	local rootPart = getRootPart(character)
-	if not rootPart then
-		return false
-	end
-	local state = getUndergroundTravelState()
-	local direction = typeof(flatDirection) == "Vector3" and Vector3.new(flatDirection.X, 0, flatDirection.Z) or Vector3.new(0, 0, -1)
-	if direction.Magnitude <= 0.001 then
-		direction = Vector3.new(0, 0, -1)
-	else
-		direction = direction.Unit
-	end
-	ensureUndergroundBodyFreeze(character, rootPart, direction)
-	clearUndergroundRepPlatform(state)
-	return true
-end
-function legacyControlledUndergroundCharacterTowards(character, targetPosition, activeToken, timeout, arriveDistance, movementOptions)
-	local rootPart = getRootPart(character)
-	if not rootPart or typeof(targetPosition) ~= "Vector3" then
-		return false
-	end
-	clearMovementKeys()
-	local wantedDistance = math.max(0.3, tonumber(arriveDistance) or getUndergroundPathReachDistance())
-	local startedAt = os.clock()
-	local lastStepAt = startedAt
-	local travelTimeout = timeout or getDirectPathTravelTimeout(character, targetPosition, 0.45)
-	local lastFlatDistance = nil
-	local undergroundSnapCount = 0
-	local useFlatPathFollow = type(movementOptions) == "table" and movementOptions.flatPathFollow == true
-	while autoMineEnabled and activeToken == autoMineToken do
-		rootPart = getRootPart(character)
-		if not rootPart then
-			return false
-		end
-		local goalPosition = getUndergroundGoalPosition(targetPosition, character)
-		if not goalPosition then
-			return false
-		end
-		local delta = goalPosition - rootPart.Position
-		local flatDelta = Vector3.new(delta.X, 0, delta.Z)
-		local flatDistance = flatDelta.Magnitude
-		local verticalDistance = math.abs(delta.Y)
-		local verticalReach = getUndergroundVerticalReachDistance(wantedDistance)
-		if delta.Magnitude <= wantedDistance or (flatDistance <= wantedDistance and verticalDistance <= verticalReach) then
-			local undergroundState = getUndergroundTravelState()
-			undergroundState.pendingVelocity = Vector3.zero
-			setUndergroundRootVelocity(rootPart, Vector3.zero)
-			ensureControlledUndergroundState(character, flatDistance > 0.001 and flatDelta.Unit or lastMoveCommand)
-			setLastMoveCommand(Vector3.zero, "UndergroundArrived")
-			return true
-		end
-		local flatDirection = flatDistance > 0.001 and flatDelta.Unit or lastMoveCommand
-		if typeof(flatDirection) ~= "Vector3" or flatDirection.Magnitude < 0.001 then
-			flatDirection = Vector3.new(0, 0, -1)
-		else
-			flatDirection = Vector3.new(flatDirection.X, 0, flatDirection.Z).Unit
-		end
-		if useFlatPathFollow then
-			local avoidanceHandled, avoidReason = processPathPlayerAvoidance(
-				character,
-				targetPosition,
-				activeToken,
-				flatDirection,
-				getHumanoid(character)
-			)
-			if avoidanceHandled then
-				if avoidReason == "hop" then
-					return false, "hop"
-				end
-				lastStepAt = os.clock()
-				task.wait(0.05)
-				continue
-			end
-		end
-		ensureControlledUndergroundState(character, flatDirection)
-		local now = os.clock()
-		local stepTime = math.clamp(now - lastStepAt, 1 / 240, 0.08)
-		lastStepAt = now
-		local speed = getEffectiveUndergroundSpeed()
-		local slowDownDistance = math.max(wantedDistance + 1.2, speed * 0.11)
-		local speedScale = math.clamp(flatDistance / slowDownDistance, 0.28, 1)
-		local stepDistance = math.clamp(speed * stepTime, 0.02, 8.0)
-		local horizontalStep = math.min(stepDistance * speedScale, flatDistance)
-		local nextFlatPosition = rootPart.Position
-		if horizontalStep > 0.001 then
-			nextFlatPosition = rootPart.Position + (flatDirection * horizontalStep)
-		end
-		local verticalStep = math.max(0.75, math.min((stepDistance * 1.6) + (math.abs(getUndergroundDepthOffset()) * 0.12), 8.5))
-		local stepReference = Vector3.new(nextFlatPosition.X, targetPosition.Y, nextFlatPosition.Z)
-		local stepGoal = getUndergroundGoalPosition(stepReference, character) or goalPosition
-		local nextY = rootPart.Position.Y + math.clamp(stepGoal.Y - rootPart.Position.Y, -verticalStep, verticalStep)
-		local stepTarget = Vector3.new(nextFlatPosition.X, nextY, nextFlatPosition.Z)
-		local goalCFrame = getUndergroundGoalCFrame(stepTarget, rootPart, flatDirection)
-		local stepStartPosition = rootPart.Position
-		local stepStartFlatDistance = flatDistance
-		setLastMoveCommand(flatDirection, "Underground")
-		local horizontalVelocity = flatDirection * (speed * speedScale)
-		local verticalVelocity = math.clamp(delta.Y * 5.5, -speed, speed)
-		local undergroundVelocity = Vector3.new(horizontalVelocity.X, verticalVelocity, horizontalVelocity.Z)
-		local undergroundState = getUndergroundTravelState()
-		undergroundState.pendingVelocity = undergroundVelocity
-		local forcedGoalApplied = applyUndergroundForcedCFrameGoal(character, goalCFrame)
-		if not forcedGoalApplied then
-			setUndergroundRootVelocity(rootPart, undergroundVelocity)
-		else
-			setUndergroundRootVelocity(rootPart, undergroundVelocity)
-		end
-		if (now - startedAt) >= travelTimeout then
-			break
-		end
-		RunService.Heartbeat:Wait()
-		local liveRootPart = getRootPart(character)
-		if not liveRootPart then
-			return false
-		end
-		local liveGoal = getUndergroundGoalPosition(targetPosition, character)
-		if liveGoal then
-			local liveFlatPosition = Vector3.new(liveRootPart.Position.X, 0, liveRootPart.Position.Z)
-			local liveGoalFlatPosition = Vector3.new(liveGoal.X, 0, liveGoal.Z)
-			local stepStartFlatPosition = Vector3.new(stepStartPosition.X, 0, stepStartPosition.Z)
-			local expectedStepFlatPosition = Vector3.new(stepTarget.X, 0, stepTarget.Z)
-			local liveFlatDistance = (liveGoalFlatPosition - liveFlatPosition).Magnitude
-			local actualStepFlatDelta = liveFlatPosition - stepStartFlatPosition
-			local movedOppositeDirection = actualStepFlatDelta.Magnitude > 0.75
-				and actualStepFlatDelta.Unit:Dot(flatDirection) < -0.45
-			local stepDeviation = (liveFlatPosition - expectedStepFlatPosition).Magnitude
-			local deviatedFromStep = stepDeviation > RUBBERBAND_STEP_DEVIATION_DISTANCE
-			local snappedBackwards = liveFlatDistance > (stepStartFlatDistance + RUBBERBAND_BACKTRACK_DISTANCE)
-				or (lastFlatDistance and liveFlatDistance > (lastFlatDistance + RUBBERBAND_BACKTRACK_DISTANCE))
-			local verticalSnapThreshold = math.max(1.2, math.min(2.6, 0.95 + (math.abs(getUndergroundDepthOffset()) * 0.3)))
-			local snappedUpFromUnderground = forcedGoalApplied and (liveRootPart.Position.Y - stepTarget.Y) > verticalSnapThreshold
-			local state = getUndergroundTravelState()
-			local repChar = state.repChar or resolveLocalRepChar(false)
-			local currentPlatform = nil
-			if isTable(repChar) then
-				state.repChar = repChar
-				currentPlatform = rawget(repChar, "CurrentPlatform") or repChar.CurrentPlatform
-			end
-			if snappedBackwards or (deviatedFromStep and movedOppositeDirection) or snappedUpFromUnderground then
-				setUndergroundRootVelocity(liveRootPart, Vector3.zero)
-				applyUndergroundForcedCFrameGoal(character, goalCFrame)
-				clearUndergroundRepPlatform(state)
-				undergroundSnapCount += 1
-				local snapReasons = {}
-				if snappedBackwards then
-					table.insert(snapReasons, "back")
-				end
-				if deviatedFromStep and movedOppositeDirection then
-					table.insert(snapReasons, "opposite")
-				elseif deviatedFromStep then
-					table.insert(snapReasons, "step")
-				end
-				if snappedUpFromUnderground then
-					table.insert(snapReasons, "vertical")
-				end
-				if #snapReasons <= 0 then
-					table.insert(snapReasons, "snap")
-				end
-				local humanoidStateName = "nil"
-				local humanoid = getHumanoid(character)
-				if humanoid then
-					pcall(function()
-						local humanoidState = humanoid:GetState()
-						humanoidStateName = humanoidState and humanoidState.Name or tostring(humanoidState)
-					end)
-				end
-				local platformText = "nil"
-				if currentPlatform ~= nil then
-					local platformId = nil
-					if isTable(currentPlatform) then
-						platformId = rawget(currentPlatform, "Id") or currentPlatform.Id
-					end
-					platformText = platformId and tostring(platformId) or "set"
-				end
-				local repText = "rep=nil"
-				if isTable(repChar) then
-					repText = "rep=" .. tostring(repChar.IsReplicated)
-						.. " rag=" .. tostring(repChar.IsRagdolled)
-						.. " ctrl=" .. tostring(repChar.ControllingRagdoll)
-						.. " force=" .. tostring(repChar.LocalForceCFrame ~= nil)
-				end
-				local referenceY = getUndergroundReferenceY(targetPosition) or targetPosition.Y
-				local rootClearance = getUndergroundRootClearance(character)
-				pushDebugRateLimited(
-					"underground_rubberband",
-					string.format(
-						"underground rubberband [%s]: flat %.1f -> %.1f dev %.1f y %+0.1f depth %.1f clear %.1f refY %.1f state=%s plat=%s %s hook=%s root=%s step=%s goal=%s",
-						table.concat(snapReasons, "+"),
-						tonumber(lastFlatDistance or stepStartFlatDistance) or 0,
-						liveFlatDistance,
-						stepDeviation,
-						liveRootPart.Position.Y - stepTarget.Y,
-						getUndergroundDepthOffset(),
-						rootClearance,
-						referenceY,
-						humanoidStateName,
-						platformText,
-						repText,
-						tostring(playerState.undergroundPreReplicateConnection ~= nil),
-						formatPathDebugVector3(liveRootPart.Position),
-						formatPathDebugVector3(stepTarget),
-						formatPathDebugVector3(liveGoal)
-					),
-					0.8
-				)
-				local severeFlatSnap = liveFlatDistance > (stepStartFlatDistance + math.max(12, RUBBERBAND_BACKTRACK_DISTANCE * 2.5))
-					or (lastFlatDistance and liveFlatDistance > (lastFlatDistance + math.max(12, RUBBERBAND_BACKTRACK_DISTANCE * 2.5)))
-				local severeStepSnap = stepDeviation > math.max(14, RUBBERBAND_STEP_DEVIATION_DISTANCE * 2.5)
-				if severeFlatSnap or severeStepSnap or undergroundSnapCount >= 6 then
-					if type(notifyRubberBandDetected) == "function" then
-						notifyRubberBandDetected()
-					end
-					return false, "rubberband"
-				end
-				task.wait(0.03)
-				continue
-			end
-			undergroundSnapCount = math.max(0, undergroundSnapCount - 1)
-			lastFlatDistance = liveFlatDistance
-		end
-	end
-	rootPart = getRootPart(character)
-	if rootPart then
-		setUndergroundRootVelocity(rootPart, Vector3.zero)
-		local goalPosition = getUndergroundGoalPosition(targetPosition, character)
-		if goalPosition then
-			local delta = goalPosition - rootPart.Position
-			local flatDistance = Vector3.new(delta.X, 0, delta.Z).Magnitude
-			local finishSlack = math.max(0.35, wantedDistance * 0.45)
-			return delta.Magnitude <= (wantedDistance + finishSlack)
-				or (flatDistance <= (wantedDistance + finishSlack) and math.abs(delta.Y) <= (getUndergroundVerticalReachDistance(wantedDistance) + finishSlack))
-		end
-	end
-	return false
-end
-
 -- West X underground replacement.
--- The old automine underground controller used roll animations, platform hooks, and
--- LocalForceCFrame. Keep the public function names, but route underground movement
--- through the recovered West X-style crouch/collision/root-CFrame travel path.
+-- Keep the public function names, but route underground movement through the
+-- recovered West X-style crouch/collision/root-CFrame travel path.
 local westXUndergroundSignalCache = {
 	crouch = nil,
 	sprint = nil,
@@ -25813,29 +24467,6 @@ function resolveRagdollsModule(forceRefresh)
 	end
 	return nil
 end
-function resolveClientPlatformsModule(forceRefresh)
-	if not isAutomineGameModuleAccessReady() then
-		return nil
-	end
-	local globalModule = getAutoMineGlobalModule(forceRefresh)
-	if not isTable(globalModule) then
-		return nil
-	end
-	local clientPlatforms = rawget(globalModule, "ClientPlatforms") or globalModule.ClientPlatforms
-	if isTable(clientPlatforms) then
-		return clientPlatforms
-	end
-	if type(globalModule.LoadModule) == "function" then
-		local okLoad, loadedModule = pcall(function()
-			return globalModule:LoadModule("ClientPlatforms")
-		end)
-		if okLoad and isTable(loadedModule) then
-			globalModule.ClientPlatforms = loadedModule
-			return loadedModule
-		end
-	end
-	return nil
-end
 function restoreUndergroundPlatformHook()
 	local owner = playerState.hookedUndergroundPlatformOwner
 	if isTable(owner)
@@ -25846,30 +24477,6 @@ function restoreUndergroundPlatformHook()
 	playerState.hookedUndergroundPlatformOwner = nil
 	playerState.originalUndergroundUpdateAnchorables = nil
 	playerState.undergroundUpdateAnchorablesWrapper = nil
-end
-function ensureUndergroundPlatformHook()
-	local clientPlatforms = resolveClientPlatformsModule(false) or resolveClientPlatformsModule(true)
-	if not isTable(clientPlatforms) then
-		return nil
-	end
-	if clientPlatforms ~= playerState.hookedUndergroundPlatformOwner then
-		restoreUndergroundPlatformHook()
-		playerState.hookedUndergroundPlatformOwner = clientPlatforms
-	end
-	local updateAnchorables = rawget(clientPlatforms, "UpdateAnchorables") or clientPlatforms.UpdateAnchorables
-	if type(updateAnchorables) == "function" and updateAnchorables ~= playerState.undergroundUpdateAnchorablesWrapper then
-		playerState.originalUndergroundUpdateAnchorables = updateAnchorables
-		playerState.undergroundUpdateAnchorablesWrapper = function(self, ...)
-			local result = playerState.originalUndergroundUpdateAnchorables(self, ...)
-			local undergroundState = getUndergroundTravelState()
-			if undergroundState and undergroundState.active and typeof(undergroundState.character) == "Instance" then
-				clearUndergroundRepPlatform(undergroundState)
-			end
-			return result
-		end
-		clientPlatforms.UpdateAnchorables = playerState.undergroundUpdateAnchorablesWrapper
-	end
-	return clientPlatforms
 end
 function getExperimentalTravelCharacter()
 	local state = getExperimentalCFrameTravelState()
@@ -31046,12 +29653,6 @@ function refreshTweenButton()
 		if pathUi.undergroundDepthContainer then
 			setAnimatedGuiVisible(pathUi.undergroundDepthContainer, showUnderground, 38, instantMovementRows)
 		end
-		if pathUi.undergroundAngleContainer then
-			setAnimatedGuiVisible(pathUi.undergroundAngleContainer, showUnderground, 38, instantMovementRows)
-		end
-		if pathUi.undergroundLayAngleContainer then
-			setAnimatedGuiVisible(pathUi.undergroundLayAngleContainer, showUnderground, 38, instantMovementRows)
-		end
 		safeUpdateAutofarmLayout()
 	end)
 end
@@ -33435,20 +32036,6 @@ function __westwareBuildAutomineTab()
                 pushDebug("underground depth: " .. tostring(getUndergroundDepthOffset()))
             end
         end, getUndergroundDepthOffset, UNDERGROUND_DEPTH_OFFSET_MIN, UNDERGROUND_DEPTH_OFFSET_MAX, {decimals = 1, step = 0.1, textBoxWidth = 38,})
-        createAutomineHiddenSlider("undergroundAngleContainer", "UndergroundAngleContainer", "undergroundAngleRow", "undergroundAngleUpdate", "undergroundAngleLabel", "Underground Angle", getUndergroundAngle(), function(value)
-            local oldValue = undergroundAngle
-            setUndergroundAngle(value)
-            if math.abs(oldValue - undergroundAngle) > 0.05 then
-                pushDebug("underground angle: " .. tostring(getUndergroundAngle()))
-            end
-        end, getUndergroundAngle, UNDERGROUND_ANGLE_MIN, UNDERGROUND_ANGLE_MAX, {textBoxWidth = 38, step = 5,})
-        createAutomineHiddenSlider("undergroundLayAngleContainer", "UndergroundLayAngleContainer", "undergroundLayAngleRow", "undergroundLayAngleUpdate", "undergroundLayAngleLabel", "Underground Lay Angle", getUndergroundLayAngle(), function(value)
-            local oldValue = undergroundLayAngle
-            setUndergroundLayAngle(value)
-            if math.abs(oldValue - undergroundLayAngle) > 0.05 then
-                pushDebug("underground lay angle: " .. tostring(getUndergroundLayAngle()))
-            end
-        end, getUndergroundLayAngle, UNDERGROUND_LAY_ANGLE_MIN, UNDERGROUND_LAY_ANGLE_MAX, {textBoxWidth = 38, step = 5,})
         createAutomineToggleRow("Auto Pickup", pathUi.mainRowsPage, function() return autoPickupEnabled end, function()
             autoPickupEnabled = not autoPickupEnabled
             S.autoPickupEnabled = autoPickupEnabled
@@ -33969,8 +32556,6 @@ function __westwareBuildAutomineTab()
     setCFrameFlyOffset(cframeFlyOffset)
     setCFrameFlyAngle(cframeFlyAngle)
     setUndergroundDepthOffset(undergroundDepthOffset)
-    setUndergroundAngle(undergroundAngle)
-    setUndergroundLayAngle(undergroundLayAngle)
     if type(refreshPathDeathHopConnection) == "function" then
         refreshPathDeathHopConnection()
     end
@@ -34019,8 +32604,7 @@ function __westwareBuildAutomineTab()
             local moveDirectionMagnitude = 0
             local targetDistance = -1
             local oreHealth = "nil"
-            local animationDebug = "none"
-            local leftFallPathText = "missing"
+            local undergroundDebug = "westx"
             if rootPart then
                 anchored = tostring(rootPart.Anchored)
                 horizontalSpeed = math.floor(Vector3.new(rootPart.AssemblyLinearVelocity.X, 0, rootPart.AssemblyLinearVelocity.Z).Magnitude * 10 + 0.5) / 10
@@ -34050,17 +32634,11 @@ function __westwareBuildAutomineTab()
                 targetDistance = math.floor(getDistanceToOre(character, currentTargetOre) * 10 + 0.5) / 10
                 oreHealth = formatOreHealthText(currentTargetOre, false)
             end
-            if type(getUndergroundTravelAnimationDebugText) == "function" then
-                animationDebug = getUndergroundTravelAnimationDebugText(character)
-            end
-            if type(getUndergroundDirectAnimationInstance) == "function" and getUndergroundDirectAnimationInstance("LeftFall") then
-                leftFallPathText = "ok"
-            end
             if movementDebugLabel then
                 pcall(function()
                     movementDebugLabel.Text = table.concat({
-                        string.format("mode=%s aura=%s pickup=%s path=%s range=%.0f sprint=%s infstam=%s ts=%.0f fly=%.0f angle=%.0f ug=%.1f/%.0f lay=%.0f", getMovementModeLabel(), tostring(mineAuraEnabled), tostring(autoPickupEnabled), tostring(pathState.playbackActive), mineAuraEnabled and MINE_AURA_RANGE or MINE_RANGE, tostring(movementKeyState[Enum.KeyCode.LeftShift]), tostring(playerState.infiniteStaminaEnabled), tweenMoveSpeed, getCFrameFlyOffset(), getCFrameFlyAngle(), getUndergroundDepthOffset(), getUndergroundAngle(), getUndergroundLayAngle()),
-                        string.format("humanoid=%s anchored=%s anim=%s lfpath=%s", stateName, anchored, animationDebug, leftFallPathText),
+                        string.format("mode=%s aura=%s pickup=%s path=%s range=%.0f sprint=%s infstam=%s ts=%.0f fly=%.0f angle=%.0f ug=%.1f", getMovementModeLabel(), tostring(mineAuraEnabled), tostring(autoPickupEnabled), tostring(pathState.playbackActive), mineAuraEnabled and MINE_AURA_RANGE or MINE_RANGE, tostring(movementKeyState[Enum.KeyCode.LeftShift]), tostring(playerState.infiniteStaminaEnabled), tweenMoveSpeed, getCFrameFlyOffset(), getCFrameFlyAngle(), getUndergroundDepthOffset()),
+                        string.format("humanoid=%s anchored=%s underground=%s", stateName, anchored, undergroundDebug),
                         string.format("walkspeed=%.2f movedir=%.2f vel=%.1f delta=%.1f", walkSpeed, moveDirectionMagnitude, horizontalSpeed, displacementSpeed),
                         string.format("cmd=%s %.2f, %.2f, %.2f", lastMoveCommandSource, lastMoveCommand.X, lastMoveCommand.Y, lastMoveCommand.Z),
                         string.format("targetDist=%s oreHp=%s", targetDistance >= 0 and tostring(targetDistance) or "nil", oreHealth),
