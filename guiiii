@@ -1056,6 +1056,13 @@ end
 function normalizeHorseFlingTargetPart(value)
     return findCaseInsensitiveOption(value or DEFAULTS.horseFlingTargetPart, HORSE_FLING_TARGET_PART_OPTIONS) or DEFAULTS.horseFlingTargetPart
 end
+function normalizeSerializedMovementMode(value)
+    local candidate = string.lower(tostring(value or DEFAULTS.movementMode or "cframe")):gsub("%s+", "")
+    if candidate == "cframe" or candidate == "cframefly" or candidate == "underground" then
+        return candidate
+    end
+    return "cframe"
+end
 function normalizePathPlayerAvoiderMethod(value)
     return findCaseInsensitiveOption(value or DEFAULTS.pathPlayerAvoiderMethod, PATH_PLAYER_AVOIDER_METHOD_ORDER)
         or DEFAULTS.pathPlayerAvoiderMethod
@@ -6699,7 +6706,9 @@ S.tweenMoveSpeed = math.clamp(math.floor(((tonumber(S.tweenMoveSpeed) or DEFAULT
         pathState.playerAvoiderShowCorridor = S.pathPlayerAvoiderShowCorridor
         pathState.playerAvoiderMethod = S.pathPlayerAvoiderMethod
         pathState.playerAvoiderMethods = clonePathPlayerAvoiderMethods(S.pathPlayerAvoiderMethods, S.pathPlayerAvoiderMethod)
-        pathState.playerAvoiderMethod = getPrimaryPathPlayerAvoiderMethod(pathState.playerAvoiderMethods)
+        if type(getPrimaryPathPlayerAvoiderMethod) == "function" then
+            pathState.playerAvoiderMethod = getPrimaryPathPlayerAvoiderMethod(pathState.playerAvoiderMethods)
+        end
         S.pathPlayerAvoiderMethod = pathState.playerAvoiderMethod
         pathState.playerAvoiderAction = S.pathPlayerAvoiderAction
         pathState.playerAvoiderRadius = S.pathPlayerAvoiderRadius
