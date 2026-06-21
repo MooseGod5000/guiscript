@@ -919,6 +919,7 @@ local DEFAULTS = {
     cframeFlyAngle = 0,
     undergroundDepthOffset = 1,
     undergroundLeftFallTestEnabled = false,
+    undergroundRepCharAssistEnabled = true,
     autoPickupEnabled = false,
     autoPickupWhitelistEnabled = false,
     selectedOreNames = {Coal = true},
@@ -1631,7 +1632,7 @@ local SIMPLE_BOOLEAN_SETTING_KEYS = {
     "playerEspEnabled", "npcEspEnabled", "animalEspEnabled", "specialEntityEspEnabled", "legendaryAnimalEspEnabled", "cameraNoclipEnabled", "cameraInfiniteZoomEnabled",
     "staffNotifyEnabled", "staffKickEnabled", "pathSmartStaffDetectionEnabled", "pathStayGroundedEnabled", "pathPlayerAvoiderEnabled",
     "pathPlayerAvoiderShowCorridor", "pathPlayerAvoiderShowRadius", "pathBearPreventionEnabled", "pathHopOnDeathEnabled", "pathHopTimePassEnabled",
-    "pathOrePurityHopEnabled", "undergroundLeftFallTestEnabled", "autoPickupEnabled", "autoPickupWhitelistEnabled", "autoSellEnabled", "serverHopEnabled", "mineAuraEnabled",
+    "pathOrePurityHopEnabled", "undergroundLeftFallTestEnabled", "undergroundRepCharAssistEnabled", "autoPickupEnabled", "autoPickupWhitelistEnabled", "autoSellEnabled", "serverHopEnabled", "mineAuraEnabled",
     "pickaxeProgressionEnabled", "miningPassiveProgressionEnabled", "discordAutomineWebhookTrackingEnabled",
     "vfxAuraEnabled", "placeableInstantPlaceEnabled", "placeablePlaceAnywhereEnabled",
 }
@@ -20148,6 +20149,164 @@ function isUndergroundLeftFallTestEnabled()
 	return S and S.undergroundLeftFallTestEnabled == true
 end
 
+function isUndergroundRepCharAssistEnabled()
+	return not S or S.undergroundRepCharAssistEnabled ~= false
+end
+
+local function westXResolveRepCharAssist(state)
+	if not isUndergroundRepCharAssistEnabled() then
+		return nil, nil
+	end
+	state = type(state) == "table" and state or getUndergroundTravelState()
+	local repChar = state.repChar
+	if not isTable(repChar) and type(resolveLocalRepChar) == "function" then
+		repChar = resolveLocalRepChar(false) or resolveLocalRepChar(true)
+	end
+	local playerCharacter = state.playerCharacter
+	if not isTable(playerCharacter) and type(resolvePlayerCharacterModule) == "function" then
+		playerCharacter = resolvePlayerCharacterModule(false) or resolvePlayerCharacterModule(true)
+	end
+	if isTable(repChar) then
+		state.repChar = repChar
+	end
+	if isTable(playerCharacter) then
+		state.playerCharacter = playerCharacter
+	end
+	return repChar, playerCharacter
+end
+
+local function westXClearRepPlatform(state)
+	local repChar = state and state.repChar
+	if not isTable(repChar) then
+		return false
+	end
+	pcall(function()
+		repChar.CurrentPlatform = nil
+		repChar.FloorPlatform = nil
+		repChar.LastFloorPlatform = nil
+		repChar.LastFloorPart = nil
+		repChar.LastWasGrounded = false
+	end)
+	return true
+end
+
+local function westXSetPlayerFaceMouseDisabled(state, disabled)
+	if disabled and not isUndergroundRepCharAssistEnabled() then
+		return false
+	end
+	state = type(state) == "table" and state or getUndergroundTravelState()
+	local repChar, playerCharacter
+	if disabled then
+		repChar, playerCharacter = westXResolveRepCharAssist(state)
+	else
+		repChar = state.repChar
+		playerCharacter = state.playerCharacter
+	end
+	local changed = false
+	if isTable(playerCharacter) then
+		local faceMouse = rawget(playerCharacter, "FaceMouse") or playerCharacter.FaceMouse
+		if disabled then
+			if state.originalPlayerFacingMouse == nil then
+				local facing = rawget(playerCharacter, "FacingMouse")
+				if facing == nil then
+					facing = playerCharacter.FacingMouse
+				end
+				state.originalPlayerFacingMouse = facing ~= false
+			end
+			if type(faceMouse) == "function" then
+				changed = pcall(faceMouse, playerCharacter, false) or changed
+			else
+				changed = pcall(function()
+					playerCharacter.FacingMouse = false
+				end) or changed
+			end
+			state.playerFaceMouseDisabled = true
+		elseif state.playerFaceMouseDisabled then
+			local restoreFacing = state.originalPlayerFacingMouse ~= false
+			if type(faceMouse) == "function" then
+				changed = pcall(faceMouse, playerCharacter, restoreFacing) or changed
+			else
+				changed = pcall(function()
+					playerCharacter.FacingMouse = restoreFacing
+				end) or changed
+			end
+			state.playerFaceMouseDisabled = nil
+			state.originalPlayerFacingMouse = nil
+		end
+	end
+	if isTable(repChar) and type(setExperimentalRepFaceMouseDisabled) == "function" then
+		if disabled and not state.repFaceMouseDisabled then
+			state.repFaceMouseDisabled = setExperimentalRepFaceMouseDisabled(repChar, true) and true or false
+			changed = state.repFaceMouseDisabled or changed
+		elseif not disabled and state.repFaceMouseDisabled then
+			changed = setExperimentalRepFaceMouseDisabled(repChar, false) or changed
+			state.repFaceMouseDisabled = nil
+		end
+	end
+	return changed
+end
+
+local function westXRepCharAssistActive(state)
+	if not isUndergroundRepCharAssistEnabled() then
+		return false
+	end
+	local repChar = state and state.repChar
+	if not isTable(repChar) then
+		repChar = westXResolveRepCharAssist(state)
+	end
+	return isTable(repChar)
+end
+
+local function westXEnsureBodyGyro(state, rootPart, cframe)
+	if not (state and rootPart and rootPart:IsA("BasePart") and typeof(cframe) == "CFrame") then
+		return false
+	end
+	local gyro = state.bodyGyro
+	if not gyro or gyro.Parent ~= rootPart then
+		if gyro then
+			pcall(function()
+				gyro:Destroy()
+			end)
+		end
+		gyro = Instance.new("BodyGyro")
+		gyro.Name = "AutoMineWestXRepCharAssist"
+		gyro.MaxTorque = Vector3.new(9e8, 9e8, 9e8)
+		gyro.P = 60000
+		gyro.D = 1600
+		gyro.Parent = rootPart
+		state.bodyGyro = gyro
+	end
+	pcall(function()
+		gyro.CFrame = cframe
+	end)
+	return true
+end
+
+local function westXReleaseRepCharAssist(state)
+	if type(state) ~= "table" then
+		return
+	end
+	local repChar = state.repChar
+	if isTable(repChar) and state.usedLocalForceCFrame then
+		pcall(function()
+			repChar.LocalForceCFrame = nil
+		end)
+	end
+	westXSetPlayerFaceMouseDisabled(state, false)
+	if state.bodyGyro then
+		pcall(function()
+			state.bodyGyro:Destroy()
+		end)
+	end
+	state.bodyGyro = nil
+	state.repChar = nil
+	state.playerCharacter = nil
+	state.usedLocalForceCFrame = nil
+	state.repFaceMouseDisabled = nil
+	state.playerFaceMouseDisabled = nil
+	state.originalPlayerFacingMouse = nil
+end
+
 function getUndergroundDirectAnimationInstance(trackName)
 	if trackName ~= UNDERGROUND_LEFTFALL_TRACK_NAME then
 		return nil
@@ -20366,7 +20525,33 @@ local function westXSetRootVelocity(rootPart, velocity)
 	end)
 end
 
-local function westXSetRootCFrame(character, rootPart, cframe)
+local function westXSetRootCFrame(character, rootPart, cframe, state)
+	state = type(state) == "table" and state or getUndergroundTravelState()
+	if westXRepCharAssistActive(state) and typeof(cframe) == "CFrame" then
+		local repChar = state.repChar
+		westXClearRepPlatform(state)
+		if isTable(repChar) then
+			pcall(function()
+				repChar.LocalForceCFrame = cframe
+			end)
+			state.usedLocalForceCFrame = true
+		end
+		local targetVelocity = typeof(state.pendingVelocity) == "Vector3" and state.pendingVelocity or Vector3.zero
+		if rootPart and rootPart:IsA("BasePart") then
+			local okMove = pcall(function()
+				rootPart.CFrame = cframe
+				rootPart.Anchored = false
+				rootPart.Velocity = targetVelocity
+				rootPart.RotVelocity = Vector3.zero
+			end)
+			pcall(function()
+				rootPart.AssemblyLinearVelocity = targetVelocity
+				rootPart.AssemblyAngularVelocity = Vector3.zero
+			end)
+			westXEnsureBodyGyro(state, rootPart, cframe)
+			return okMove
+		end
+	end
 	if character and character:IsA("Model") and character.PrimaryPart then
 		local ok = pcall(function()
 			character:SetPrimaryPartCFrame(cframe)
@@ -20451,7 +20636,15 @@ local function westXApplyUndergroundState(state, character, rootPart, humanoid, 
 		humanoid.PlatformStand = true
 		humanoid.AutoRotate = false
 		humanoid.Jump = false
-		humanoid:Move(Vector3.zero)
+		local moveDirection = normalizeUndergroundFlatDirection(state.pendingMovementDirection)
+			or normalizeUndergroundFlatDirection(state.undergroundFlatDirection)
+		if moveDirection then
+			pcall(function()
+				humanoid:Move(moveDirection, false)
+			end)
+		else
+			humanoid:Move(Vector3.zero)
+		end
 	end
 	if rootPart and state.forceRootPart ~= rootPart then
 		state.forceRootPart = rootPart
@@ -20459,8 +20652,27 @@ local function westXApplyUndergroundState(state, character, rootPart, humanoid, 
 		state.originalRootCanCollide = rootPart.CanCollide
 	end
 	if rootPart then
-		rootPart.Anchored = true
-		westXSetRootVelocity(rootPart, Vector3.zero)
+		if westXRepCharAssistActive(state) then
+			westXSetPlayerFaceMouseDisabled(state, true)
+			if type(ensureSafeTeleportHooks) == "function" then
+				pcall(ensureSafeTeleportHooks)
+			end
+			rootPart.Anchored = false
+			local targetVelocity = typeof(state.pendingVelocity) == "Vector3" and state.pendingVelocity or Vector3.zero
+			westXSetRootVelocity(rootPart, targetVelocity)
+			local gyroDirection = normalizeUndergroundFlatDirection(state.undergroundFlatDirection)
+				or normalizeUndergroundFlatDirection(rootPart.CFrame.LookVector)
+				or Vector3.new(0, 0, -1)
+			westXEnsureBodyGyro(
+				state,
+				rootPart,
+				CFrame.new(rootPart.Position, rootPart.Position + gyroDirection)
+			)
+			westXClearRepPlatform(state)
+		else
+			rootPart.Anchored = true
+			westXSetRootVelocity(rootPart, Vector3.zero)
+		end
 	end
 	if shouldRefreshSignals then
 		westXSetCrouched(character, true)
@@ -20488,6 +20700,7 @@ local function westXRestoreUndergroundState(state, character)
 	local rootPart = westXGetRootPart(activeCharacter) or state.forceRootPart
 	local humanoid = state.freezeHumanoid or westXGetHumanoid(activeCharacter)
 	stopUndergroundTravelAnimations(state)
+	westXReleaseRepCharAssist(state)
 	westXRestoreCharacterCollision(state)
 	westXSetCollisionModel(activeCharacter, true)
 	westXSetWeldsActive(activeCharacter, true)
@@ -20543,6 +20756,9 @@ local function westXRestoreUndergroundState(state, character)
 	if type(restoreUndergroundPlatformHook) == "function" then
 		pcall(restoreUndergroundPlatformHook)
 	end
+	if type(restoreSafeTeleportHooks) == "function" and not (playerState and playerState.noRagdollEnabled == true) then
+		pcall(restoreSafeTeleportHooks)
+	end
 	state.westXApplied = nil
 	state.westXCharacter = nil
 	state.westXRootPart = nil
@@ -20593,6 +20809,7 @@ function beginControlledUndergroundTravel(character)
 	state.characterSource = characterSource
 	state.humanoid = westXGetHumanoid(resolvedCharacter)
 	state.undergroundFlatDirection = getUndergroundTravelDirection(rootPart, lastMoveCommand)
+	state.pendingMovementDirection = state.undergroundFlatDirection
 	if isUndergroundOreHoldActive() and not westXEndingOreHold then
 		playerState.undergroundOreHold = {}
 	end
@@ -20654,7 +20871,9 @@ function beginUndergroundOreHold(character, targetPosition)
 	holdState.targetReferencePosition = referencePosition
 	holdState.goalPosition = goalPosition
 	holdState.undergroundFlatDirection = flatDirection
-	westXSetRootCFrame(resolvedCharacter, rootPart, goalCFrame)
+	holdState.pendingMovementDirection = flatDirection
+	holdState.pendingVelocity = Vector3.zero
+	westXSetRootCFrame(resolvedCharacter, rootPart, goalCFrame, holdState)
 	westXSetRootVelocity(rootPart, Vector3.zero)
 	return true
 end
@@ -20671,6 +20890,8 @@ function ensureControlledUndergroundState(character, flatDirection)
 	end
 	state.undergroundFlatDirection = normalizeUndergroundFlatDirection(flatDirection)
 		or getUndergroundTravelDirection(rootPart, lastMoveCommand)
+	state.pendingMovementDirection = state.undergroundFlatDirection
+	westXApplyUndergroundState(state, resolvedCharacter, rootPart, westXGetHumanoid(resolvedCharacter), false)
 	return true
 end
 
@@ -20686,7 +20907,7 @@ function syncUndergroundOrientationState(character)
 	local rootPart = westXGetRootPart(activeCharacter)
 	if rootPart then
 		local direction = state.undergroundFlatDirection or lastMoveCommand
-		westXSetRootCFrame(activeCharacter, rootPart, westXGoalCFrame(rootPart.Position, rootPart, direction))
+		westXSetRootCFrame(activeCharacter, rootPart, westXGoalCFrame(rootPart.Position, rootPart, direction), state)
 	end
 	return true
 end
@@ -20729,6 +20950,7 @@ function undergroundCharacterTowards(character, targetPosition, activeToken, tim
 		if delta.Magnitude <= wantedDistance or (flatDistance <= wantedDistance and verticalDistance <= verticalReach) then
 			local state = getUndergroundTravelState()
 			state.pendingVelocity = Vector3.zero
+			state.pendingMovementDirection = Vector3.zero
 			westXSetRootVelocity(rootPart, Vector3.zero)
 			setLastMoveCommand(Vector3.zero, "WestXUndergroundArrived")
 			return true
@@ -20766,8 +20988,15 @@ function undergroundCharacterTowards(character, targetPosition, activeToken, tim
 		end
 		local goalCFrame = westXGoalCFrame(nextPosition, rootPart, flatDirection)
 		setLastMoveCommand(flatDirection, "WestXUnderground")
-		westXSetRootCFrame(resolvedCharacter, rootPart, goalCFrame)
-		westXSetRootVelocity(rootPart, Vector3.zero)
+		local state = getUndergroundTravelState()
+		state.pendingMovementDirection = flatDirection
+		state.pendingVelocity = flatDirection * speed
+		westXSetRootCFrame(resolvedCharacter, rootPart, goalCFrame, state)
+		if westXRepCharAssistActive(state) then
+			westXSetRootVelocity(rootPart, state.pendingVelocity)
+		else
+			westXSetRootVelocity(rootPart, Vector3.zero)
+		end
 		local movedDistance = (rootPart.Position - lastPosition).Magnitude
 		local madeProgress = movedDistance >= 0.25 or flatDistance < wantedDistance + 1
 		if madeProgress then
@@ -29915,6 +30144,12 @@ function refreshTweenButton()
 		if pathUi.undergroundLeftFallSync then
 			pathUi.undergroundLeftFallSync()
 		end
+		if pathUi.undergroundRepCharAssistRow then
+			setAnimatedGuiVisible(pathUi.undergroundRepCharAssistRow, showUnderground, 38, instantMovementRows)
+		end
+		if pathUi.undergroundRepCharAssistSync then
+			pathUi.undergroundRepCharAssistSync()
+		end
 		safeUpdateAutofarmLayout()
 	end)
 end
@@ -32312,6 +32547,21 @@ function __westwareBuildAutomineTab()
             pushDebug("underground LeftFall anim test: " .. (S.undergroundLeftFallTestEnabled and "ON" or "OFF"))
             refreshTweenButton()
         end, "undergroundLeftFallSync", "undergroundLeftFallRow", true)
+        createAutomineToggleRow("RepChar Assist", pathUi.mainRowsPage, function()
+            return isUndergroundRepCharAssistEnabled()
+        end, function()
+            S.undergroundRepCharAssistEnabled = not isUndergroundRepCharAssistEnabled()
+            if not S.undergroundRepCharAssistEnabled then
+                westXReleaseRepCharAssist(getUndergroundTravelState())
+                westXReleaseRepCharAssist(getUndergroundOreHoldState())
+            elseif isUndergroundMovementMode(movementMode) and isUndergroundTravelActive() then
+                local state = getUndergroundTravelState()
+                westXResolveRepCharAssist(state)
+            end
+            schedulePersist()
+            pushDebug("underground RepChar assist: " .. (isUndergroundRepCharAssistEnabled() and "ON" or "OFF"))
+            refreshTweenButton()
+        end, "undergroundRepCharAssistSync", "undergroundRepCharAssistRow", true)
         createAutomineToggleRow("Auto Pickup", pathUi.mainRowsPage, function() return autoPickupEnabled end, function()
             autoPickupEnabled = not autoPickupEnabled
             S.autoPickupEnabled = autoPickupEnabled
