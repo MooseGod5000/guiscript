@@ -19925,6 +19925,8 @@ local westXUndergroundSignalCache = {
 	welds = nil,
 }
 local westXEndingOreHold = false
+local WESTX_SIGNAL_REFRESH_INTERVAL = 0.75
+local WESTX_COLLISION_REFRESH_INTERVAL = 1.25
 
 local function westXIsAnyClass(instance, classNames)
 	if not instance then
@@ -20208,7 +20210,18 @@ local function westXRestoreCharacterCollision(state)
 	state.collisionLookup = {}
 end
 
-local function westXApplyUndergroundState(state, character, rootPart, humanoid)
+local function westXApplyUndergroundState(state, character, rootPart, humanoid, forceHeavy)
+	local now = os.clock()
+	local heavyStateChanged = state.westXApplied ~= true
+		or state.westXCharacter ~= character
+		or state.westXRootPart ~= rootPart
+		or state.westXHumanoid ~= humanoid
+	local shouldRefreshSignals = forceHeavy == true
+		or heavyStateChanged
+		or (now - (state.lastWestXSignalRefreshAt or 0)) >= WESTX_SIGNAL_REFRESH_INTERVAL
+	local shouldRefreshCollision = forceHeavy == true
+		or heavyStateChanged
+		or (now - (state.lastWestXCollisionRefreshAt or 0)) >= WESTX_COLLISION_REFRESH_INTERVAL
 	if humanoid and state.freezeHumanoid ~= humanoid then
 		state.freezeHumanoid = humanoid
 		state.originalPlatformStand = humanoid.PlatformStand
@@ -20236,10 +20249,20 @@ local function westXApplyUndergroundState(state, character, rootPart, humanoid)
 		rootPart.Anchored = true
 		westXSetRootVelocity(rootPart, Vector3.zero)
 	end
-	westXSetCrouched(character, true)
-	westXSetSprinting(character, false)
-	westXSetCollisionModel(character, false)
-	westXDisableCharacterCollision(state, character, rootPart)
+	if shouldRefreshSignals then
+		westXSetCrouched(character, true)
+		westXSetSprinting(character, false)
+		westXSetCollisionModel(character, false)
+		state.lastWestXSignalRefreshAt = now
+	end
+	if shouldRefreshCollision then
+		westXDisableCharacterCollision(state, character, rootPart)
+		state.lastWestXCollisionRefreshAt = now
+	end
+	state.westXApplied = true
+	state.westXCharacter = character
+	state.westXRootPart = rootPart
+	state.westXHumanoid = humanoid
 end
 
 local function westXRestoreUndergroundState(state, character)
@@ -20301,6 +20324,12 @@ local function westXRestoreUndergroundState(state, character)
 	if type(restoreUndergroundPlatformHook) == "function" then
 		pcall(restoreUndergroundPlatformHook)
 	end
+	state.westXApplied = nil
+	state.westXCharacter = nil
+	state.westXRootPart = nil
+	state.westXHumanoid = nil
+	state.lastWestXSignalRefreshAt = nil
+	state.lastWestXCollisionRefreshAt = nil
 end
 
 local function westXGoalCFrame(position, rootPart, flatDirection)
@@ -20348,7 +20377,7 @@ function beginControlledUndergroundTravel(character)
 	if isUndergroundOreHoldActive() and not westXEndingOreHold then
 		playerState.undergroundOreHold = {}
 	end
-	westXApplyUndergroundState(state, resolvedCharacter, rootPart, state.humanoid)
+	westXApplyUndergroundState(state, resolvedCharacter, rootPart, state.humanoid, firstEnter)
 	if firstEnter then
 		state.enteredAt = os.clock()
 		task.wait(0.5)
@@ -20423,7 +20452,6 @@ function ensureControlledUndergroundState(character, flatDirection)
 	end
 	state.undergroundFlatDirection = normalizeUndergroundFlatDirection(flatDirection)
 		or getUndergroundTravelDirection(rootPart, lastMoveCommand)
-	westXApplyUndergroundState(state, resolvedCharacter, rootPart, westXGetHumanoid(resolvedCharacter))
 	return true
 end
 
