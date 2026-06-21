@@ -918,6 +918,7 @@ local DEFAULTS = {
     cframeFlyOffset = 5,
     cframeFlyAngle = 0,
     undergroundDepthOffset = 1,
+    undergroundLeftFallTestEnabled = false,
     autoPickupEnabled = false,
     autoPickupWhitelistEnabled = false,
     selectedOreNames = {Coal = true},
@@ -1630,7 +1631,7 @@ local SIMPLE_BOOLEAN_SETTING_KEYS = {
     "playerEspEnabled", "npcEspEnabled", "animalEspEnabled", "specialEntityEspEnabled", "legendaryAnimalEspEnabled", "cameraNoclipEnabled", "cameraInfiniteZoomEnabled",
     "staffNotifyEnabled", "staffKickEnabled", "pathSmartStaffDetectionEnabled", "pathStayGroundedEnabled", "pathPlayerAvoiderEnabled",
     "pathPlayerAvoiderShowCorridor", "pathPlayerAvoiderShowRadius", "pathBearPreventionEnabled", "pathHopOnDeathEnabled", "pathHopTimePassEnabled",
-    "pathOrePurityHopEnabled", "autoPickupEnabled", "autoPickupWhitelistEnabled", "autoSellEnabled", "serverHopEnabled", "mineAuraEnabled",
+    "pathOrePurityHopEnabled", "undergroundLeftFallTestEnabled", "autoPickupEnabled", "autoPickupWhitelistEnabled", "autoSellEnabled", "serverHopEnabled", "mineAuraEnabled",
     "pickaxeProgressionEnabled", "miningPassiveProgressionEnabled", "discordAutomineWebhookTrackingEnabled",
     "vfxAuraEnabled", "placeableInstantPlaceEnabled", "placeablePlaceAnywhereEnabled",
 }
@@ -20139,6 +20140,218 @@ local function westXGetHumanoid(character)
 	return character and character:FindFirstChildOfClass("Humanoid") or nil
 end
 
+local UNDERGROUND_LEFTFALL_TRACK_NAME = "LeftFall"
+local UNDERGROUND_LEFTFALL_DIRECT_PATH = {"Resources", "Animations_New", "Player", "Movement", "Rolling", "LeftFall"}
+local UNDERGROUND_LEFTFALL_RETRY_INTERVAL = 0.25
+
+function isUndergroundLeftFallTestEnabled()
+	return S and S.undergroundLeftFallTestEnabled == true
+end
+
+function getUndergroundDirectAnimationInstance(trackName)
+	if trackName ~= UNDERGROUND_LEFTFALL_TRACK_NAME then
+		return nil
+	end
+	local cache = rawget(_G, "__AutoMineUndergroundAnimationPathCache")
+	if type(cache) ~= "table" then
+		cache = {}
+		_G.__AutoMineUndergroundAnimationPathCache = cache
+	end
+	local cached = cache[trackName]
+	if typeof(cached) == "Instance" and cached.Parent then
+		return cached
+	end
+	local current = ReplicatedStorage
+	for _, childName in ipairs(UNDERGROUND_LEFTFALL_DIRECT_PATH) do
+		current = current and current:FindFirstChild(childName)
+		if not current then
+			return nil
+		end
+	end
+	cache[trackName] = current
+	return current
+end
+
+function getUndergroundAnimationHandler(state, character)
+	if type(state) ~= "table" then
+		state = getUndergroundTravelState()
+	end
+	local playerCharacter = state.playerCharacter
+	if not isTable(playerCharacter) and type(resolvePlayerCharacterModule) == "function" then
+		playerCharacter = resolvePlayerCharacterModule(false) or resolvePlayerCharacterModule(true)
+	end
+	if isTable(playerCharacter) then
+		state.playerCharacter = playerCharacter
+		local handler = rawget(playerCharacter, "AnimationHandler") or playerCharacter.AnimationHandler
+		if isTable(handler) and type(rawget(handler, "PlayTrack") or handler.PlayTrack) == "function" then
+			return handler, "PlayerCharacter"
+		end
+	end
+	local repChar = state.repChar
+	if not isTable(repChar) and type(resolveLocalRepChar) == "function" then
+		repChar = resolveLocalRepChar(false) or resolveLocalRepChar(true)
+	end
+	if isTable(repChar) then
+		state.repChar = repChar
+		local handler = rawget(repChar, "AnimationHandler") or repChar.AnimationHandler
+		if isTable(handler) and type(rawget(handler, "PlayTrack") or handler.PlayTrack) == "function" then
+			return handler, "RepChar"
+		end
+	end
+	return nil, "none"
+end
+
+function isUndergroundAnimationTrackPlaying(handler, trackName, track)
+	local isTrackPlaying = isTable(handler) and (rawget(handler, "IsTrackPlaying") or handler.IsTrackPlaying) or nil
+	if type(isTrackPlaying) == "function" then
+		local okPlaying, playing = pcall(isTrackPlaying, handler, trackName)
+		if okPlaying then
+			return playing == true
+		end
+	end
+	if track then
+		local okTrackPlaying, trackPlaying = pcall(function()
+			return track.IsPlaying == true
+		end)
+		if okTrackPlaying then
+			return trackPlaying == true
+		end
+	end
+	return false
+end
+
+local function getUndergroundHumanoidAnimator(character, humanoid)
+	humanoid = humanoid or westXGetHumanoid(character) or (type(getHumanoid) == "function" and getHumanoid(character) or nil)
+	if not humanoid then
+		return nil
+	end
+	local animator = humanoid:FindFirstChildOfClass("Animator")
+	if not animator then
+		pcall(function()
+			animator = Instance.new("Animator")
+			animator.Parent = humanoid
+		end)
+	end
+	return animator
+end
+
+function stopUndergroundTravelAnimations(state)
+	if type(state) ~= "table" then
+		return
+	end
+	local handler = state.undergroundAnimationHandler
+	local tracks = state.undergroundAnimationTracks
+	if type(tracks) == "table" then
+		for trackName, track in pairs(tracks) do
+			local stopped = false
+			local stopTrack = isTable(handler) and (rawget(handler, "StopTrack") or handler.StopTrack) or nil
+			if type(stopTrack) == "function" then
+				stopped = pcall(stopTrack, handler, trackName, 0.12) and true or false
+			end
+			if not stopped and track ~= nil then
+				local trackStop = nil
+				pcall(function()
+					trackStop = track.Stop
+				end)
+				if type(trackStop) == "function" then
+					pcall(function()
+						track:Stop(0.12)
+					end)
+				end
+			end
+		end
+	end
+	state.undergroundAnimationHandler = nil
+	state.undergroundAnimationTracks = nil
+	state.undergroundAnimationSource = nil
+	state.undergroundLeftFallLastEnsureAt = nil
+end
+
+function getUndergroundTravelAnimationDebugText(character)
+	local state = playerState and playerState.undergroundTravel
+	if type(state) ~= "table" or (state.active ~= true and type(state.undergroundAnimationTracks) ~= "table") then
+		state = playerState and playerState.undergroundOreHold
+	end
+	if type(state) ~= "table" or (state.active ~= true and type(state.undergroundAnimationTracks) ~= "table") then
+		return "none"
+	end
+	if not isUndergroundLeftFallTestEnabled() and type(state.undergroundAnimationTracks) ~= "table" then
+		return "none"
+	end
+	local handler = state.undergroundAnimationHandler or getUndergroundAnimationHandler(state, character)
+	local track = state.undergroundAnimationTracks and state.undergroundAnimationTracks[UNDERGROUND_LEFTFALL_TRACK_NAME]
+	if isUndergroundAnimationTrackPlaying(handler, UNDERGROUND_LEFTFALL_TRACK_NAME, track) then
+		return tostring(state.undergroundAnimationSource or "LeftFall")
+	end
+	return "none"
+end
+
+function ensureUndergroundLeftFallTestAnimation(character, state, humanoid)
+	if not isUndergroundLeftFallTestEnabled() then
+		stopUndergroundTravelAnimations(state)
+		return false
+	end
+	state = type(state) == "table" and state or getUndergroundTravelState()
+	if type(state) ~= "table" or state.active ~= true then
+		return false
+	end
+	local now = os.clock()
+	if (now - (state.undergroundLeftFallLastEnsureAt or 0)) < UNDERGROUND_LEFTFALL_RETRY_INTERVAL then
+		return true
+	end
+	state.undergroundLeftFallLastEnsureAt = now
+	local handler, handlerSource = getUndergroundAnimationHandler(state, character)
+	if handler then
+		if state.undergroundAnimationHandler ~= handler then
+			stopUndergroundTravelAnimations(state)
+			state.undergroundAnimationHandler = handler
+			state.undergroundAnimationTracks = {}
+		end
+		local track = state.undergroundAnimationTracks and state.undergroundAnimationTracks[UNDERGROUND_LEFTFALL_TRACK_NAME]
+		if not isUndergroundAnimationTrackPlaying(handler, UNDERGROUND_LEFTFALL_TRACK_NAME, track) then
+			local playTrack = rawget(handler, "PlayTrack") or handler.PlayTrack
+			local okPlay, playedTrack = pcall(playTrack, handler, UNDERGROUND_LEFTFALL_TRACK_NAME, 0, math.huge, 100)
+			if not okPlay then
+				okPlay, playedTrack = pcall(playTrack, handler, UNDERGROUND_LEFTFALL_TRACK_NAME, 0.12, 1, 1)
+			end
+			if okPlay then
+				state.undergroundAnimationTracks[UNDERGROUND_LEFTFALL_TRACK_NAME] = playedTrack or true
+				state.undergroundAnimationSource = "LeftFall/" .. tostring(handlerSource)
+				pushDebugRateLimited("underground_leftfall_test_play", "underground LeftFall test: AnimationHandler", 2)
+				return true
+			end
+		else
+			return true
+		end
+	end
+	local animation = getUndergroundDirectAnimationInstance(UNDERGROUND_LEFTFALL_TRACK_NAME)
+	local animator = animation and getUndergroundHumanoidAnimator(character, humanoid)
+	if animator then
+		state.undergroundAnimationTracks = state.undergroundAnimationTracks or {}
+		local track = state.undergroundAnimationTracks[UNDERGROUND_LEFTFALL_TRACK_NAME]
+		if not isUndergroundAnimationTrackPlaying(nil, UNDERGROUND_LEFTFALL_TRACK_NAME, track) then
+			local okLoad, loadedTrack = pcall(function()
+				return animator:LoadAnimation(animation)
+			end)
+			if okLoad and loadedTrack then
+				pcall(function()
+					loadedTrack.Looped = true
+					loadedTrack.Priority = Enum.AnimationPriority.Action
+					loadedTrack:Play(0.12, 1, 1)
+				end)
+				state.undergroundAnimationTracks[UNDERGROUND_LEFTFALL_TRACK_NAME] = loadedTrack
+				state.undergroundAnimationSource = "LeftFall/Animator"
+				pushDebugRateLimited("underground_leftfall_test_play", "underground LeftFall test: Animator", 2)
+				return true
+			end
+		else
+			return true
+		end
+	end
+	pushDebugRateLimited("underground_leftfall_test_missing", "underground LeftFall test: no animation handler/path", 2)
+	return false
+end
+
 local function westXSetRootVelocity(rootPart, velocity)
 	if not rootPart then
 		return
@@ -20259,6 +20472,11 @@ local function westXApplyUndergroundState(state, character, rootPart, humanoid, 
 		westXDisableCharacterCollision(state, character, rootPart)
 		state.lastWestXCollisionRefreshAt = now
 	end
+	if isUndergroundLeftFallTestEnabled() then
+		ensureUndergroundLeftFallTestAnimation(character, state, humanoid)
+	elseif type(state.undergroundAnimationTracks) == "table" then
+		stopUndergroundTravelAnimations(state)
+	end
 	state.westXApplied = true
 	state.westXCharacter = character
 	state.westXRootPart = rootPart
@@ -20269,6 +20487,7 @@ local function westXRestoreUndergroundState(state, character)
 	local activeCharacter = character or state.character
 	local rootPart = westXGetRootPart(activeCharacter) or state.forceRootPart
 	local humanoid = state.freezeHumanoid or westXGetHumanoid(activeCharacter)
+	stopUndergroundTravelAnimations(state)
 	westXRestoreCharacterCollision(state)
 	westXSetCollisionModel(activeCharacter, true)
 	westXSetWeldsActive(activeCharacter, true)
@@ -29690,6 +29909,12 @@ function refreshTweenButton()
 		if pathUi.undergroundDepthContainer then
 			setAnimatedGuiVisible(pathUi.undergroundDepthContainer, showUnderground, 38, instantMovementRows)
 		end
+		if pathUi.undergroundLeftFallRow then
+			setAnimatedGuiVisible(pathUi.undergroundLeftFallRow, showUnderground, 38, instantMovementRows)
+		end
+		if pathUi.undergroundLeftFallSync then
+			pathUi.undergroundLeftFallSync()
+		end
 		safeUpdateAutofarmLayout()
 	end)
 end
@@ -32073,6 +32298,20 @@ function __westwareBuildAutomineTab()
                 pushDebug("underground depth: " .. tostring(getUndergroundDepthOffset()))
             end
         end, getUndergroundDepthOffset, UNDERGROUND_DEPTH_OFFSET_MIN, UNDERGROUND_DEPTH_OFFSET_MAX, {decimals = 1, step = 0.1, textBoxWidth = 38,})
+        createAutomineToggleRow("LeftFall Anim Test", pathUi.mainRowsPage, function()
+            return S.undergroundLeftFallTestEnabled == true
+        end, function()
+            S.undergroundLeftFallTestEnabled = not (S.undergroundLeftFallTestEnabled == true)
+            if not S.undergroundLeftFallTestEnabled then
+                stopUndergroundTravelAnimations(getUndergroundTravelState())
+                stopUndergroundTravelAnimations(getUndergroundOreHoldState())
+            elseif isUndergroundMovementMode(movementMode) and isUndergroundTravelActive() then
+                ensureUndergroundLeftFallTestAnimation(cachedCharacter, getUndergroundTravelState(), cachedHumanoid)
+            end
+            schedulePersist()
+            pushDebug("underground LeftFall anim test: " .. (S.undergroundLeftFallTestEnabled and "ON" or "OFF"))
+            refreshTweenButton()
+        end, "undergroundLeftFallSync", "undergroundLeftFallRow", true)
         createAutomineToggleRow("Auto Pickup", pathUi.mainRowsPage, function() return autoPickupEnabled end, function()
             autoPickupEnabled = not autoPickupEnabled
             S.autoPickupEnabled = autoPickupEnabled
